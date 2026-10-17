@@ -1,0 +1,26 @@
+# Traceability register: upstream behaviour -> Lean symbol -> theorem -> test.
+#
+# `scripts/traceability-check.py` validates it on every CI run: every
+# `realises`/`theorem` symbol must resolve, every `test` path must exist.
+#
+# status: implemented | partial | tested | excluded | deviation
+#   implemented  realised and proved
+#   partial      realised, proof incomplete or covering a subset
+#   tested       realised, deliberately tested rather than proved (say why)
+#   excluded     out of scope, rejected by name
+#   deviation    behaviour differs from upstream on purpose (say how)
+
+[meta]
+upstream_name = "pydantic, pydantic-core and annotated-types"
+upstream_url = "https://github.com/pydantic/pydantic"
+upstream_commit = "5adfeaaaea947f81f0f01868604f219084ec151a"
+upstream_license = "MIT"
+
+# [[requirement]]
+# id = "..."                  # stable id, e.g. "routing.first-match"
+# upstream = "tests/test_x.py::test_y"   # or a docs section
+# title = "..."
+# status = "implemented"
+# realises = ["LeanPydantic.Foo.bar"]
+# theorem = ["LeanPydantic.Foo.bar_spec"]
+# test = ["tests/Conformance.lean::name"]
