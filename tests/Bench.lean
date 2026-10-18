@@ -51,8 +51,9 @@ The parsed rows give pydantic-core a built Python `dict`, so it does no
 key collapsing, while here the members arrive as a list and are collapsed
 with a hash index.
 
-The pattern rows run compiled patterns (`Regex.ofSource`: derivative terms
-numbered once, tables of linear forms, steps cached per call by term set).
+The pattern rows run compiled patterns (`Regex.ofSource`, through
+`Keel.Regex.compile`: derivative terms numbered once, tables of linear forms,
+steps cached per call by term set).
 Every pattern has a passing and a failing row; a failing email-like match
 (no `@`, a one-letter TLD, an upper-case tail, a 65-character local part)
 costs no more than a passing one (0.02-0.04 ms per call, both under the

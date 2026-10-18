@@ -1,20 +1,16 @@
 import LeanPydantic.DataTypes.Regex
 import LeanPydantic.RepoImpl.Regex.Unicode
+import Keel.Regex
 
 /-!
-# RepoImpl: matching by partial derivatives
+# RepoImpl: the Rust dialect's classes, and matching through Keel
 
-`Regex.search r s` decides whether `r` matches somewhere in `s`, as Rust's
-`Regex::is_match` does. The scan reads `s` once, left to right, keeping a
-set of terms: Antimirov's partial derivatives of `r` by the text read so far,
-started at every position, with duplicates removed. A term is nullable at
-the next position exactly when a match ends there.
-
-There is no backtracking. Every term of the set is `r` or one of its partial
-derivatives `PD r`, of which there are at most as many as `r` has character
-classes (`Proofs/Regex.lean`, `reach_length_le`), so the work per character
-is bounded by the pattern, and the scan is linear in the input. It is a tail
-loop over the input; the only other recursion is on the pattern's terms.
+The atoms read Rust's Unicode tables; `CharClass Atom` hands them, and `\w`
+as the word test, to `Keel.Regex`, whose matcher (Antimirov's partial
+derivatives, compiled to numbered tables with a per-call cache) does the
+rest. `Regex.search r s` is Rust's `Regex::is_match`: Keel's scan in
+`Mode.search`. It reads `s` once with no backtracking; the work per
+character is bounded by the pattern (`Keel.Regex.reach_length_le`).
 -/
 
 namespace LeanPydantic.Regex
@@ -57,73 +53,44 @@ def Atom.test : Atom → Char → Bool
   | .word, c => isWord c
   | .space, c => isSpace c
 
+/-- The Rust dialect: its atoms, and `\w` for the word assertions. -/
+instance : Keel.CharClass Atom where
+  test := Atom.test
+  word := isWord
+
 /-- Whether a character is in a class. -/
-def Cls.test : Cls → Char → Bool
-  | .atom a, c => a.test c
-  | .union k l, c => k.test c || l.test c
-  | .inter k l, c => k.test c && l.test c
-  | .diff k l, c => k.test c && !l.test c
-  | .sym k l, c => k.test c != l.test c
-  | .neg k, c => !k.test c
+def Cls.test (k : Cls) (c : Char) : Bool := Keel.CharClass.test k c
 
 /-- Is the character next to a position a word character? None at the ends. -/
-def wordAt : Option Char → Bool
-  | some c => isWord c
-  | none => false
+def wordAt : Option Char → Bool := Keel.Regex.wordAt isWord
 
 /-- Whether an assertion holds between the character before (`p`) and the
 character after (`n`); `none` is an end of the text. -/
-def Assertion.holds : Assertion → Option Char → Option Char → Bool
-  | .start, p, _ => p.isNone
-  | .finish, _, n => n.isNone
-  | .wordBoundary, p, n => wordAt p != wordAt n
-  | .notWordBoundary, p, n => wordAt p == wordAt n
-  | .wordStart, p, n => !wordAt p && wordAt n
-  | .wordEnd, p, n => wordAt p && !wordAt n
+def Assertion.holds (a : Assertion) (p n : Option Char) : Bool := Keel.Regex.Assertion.holds isWord a p n
 
 namespace Regex
 
-/-- Whether `r` matches the empty string between `p` and `n`. -/
-def nullable (p n : Option Char) : Regex → Bool
-  | empty => false
-  | eps => true
-  | cls _ => false
-  | assert a => a.holds p n
-  | alt r s => nullable p n r || nullable p n s
-  | cat r s => nullable p n r && nullable p n s
-  | star _ => true
+/-- `nullable p n r`: `r` matches the empty string between `p` and `n`. -/
+def nullable (p n : Option Char) (r : Regex) : Bool := Keel.Regex.nullable p n r
 
-/-- Concatenation, dropping a leading `eps`. -/
-def seq (r s : Regex) : Regex := if r = eps then s else cat r s
+/-- Antimirov's partial derivatives of `r` by `c`, after `p`. -/
+def pd (p : Option Char) (c : Char) (r : Regex) : List Regex := Keel.Regex.pd p c r
 
-/-- Partial derivatives of `r` by `c`, read just after the character `p`:
-the terms that, matched after `c`, make up a match of `r` that starts
-with `c`. -/
-def pd (p : Option Char) (c : Char) : Regex → List Regex
-  | empty => []
-  | eps => []
-  | cls k => if k.test c then [eps] else []
-  | assert _ => []
-  | alt r s => pd p c r ++ pd p c s
-  | cat r s =>
-    (pd p c r).map (seq · s) ++ (if nullable p (some c) r then pd p c s else [])
-  | star r => (pd p c r).map (seq · (star r))
-
-/-- The list without duplicates (first occurrences kept, in reverse). -/
-def uniq (l : List Regex) : List Regex := l.foldl (fun acc q => acc.insert q) []
-
-/-- One step of the scan: the derivatives of the set by `c` read after `p`,
-and `r` again, for a match starting after `c`. -/
+/-- One step of the unanchored scan. -/
 def next (r : Regex) (p : Option Char) (c : Char) (T : List Regex) : List Regex :=
-  (uniq (T.flatMap (pd p c))).insert r
+  Keel.Regex.next .search r p c T
 
-/-- The scan, after the character `p`, on the rest of the text. -/
-def scan (r : Regex) (p : Option Char) : List Char → List Regex → Bool
-  | [], T => T.any (nullable p none)
-  | c :: cs, T => if T.any (nullable p (some c)) then true else scan r (some c) cs (next r p c T)
+/-- **Rust's `is_match`**: `r` matches somewhere in `s` (Keel's scan). -/
+def search (r : Regex) (s : String) : Bool := Keel.Regex.accepts .search r s.toList
 
-/-- Whether `r` matches somewhere in `s` (Rust's `is_match`). -/
-def search (r : Regex) (s : String) : Bool := scan r none s.toList [r]
+/-- A compiled pattern: Keel's numbered tables for `r`. -/
+abbrev Nfa (r : Regex) := Keel.Regex.Nfa r
+
+/-- Number the derivative terms of `r` and build the tables, once. -/
+def Nfa.build (r : Regex) : Option (Nfa r) := Keel.Regex.Nfa.build r
+
+/-- The compiled search. -/
+def Nfa.search {r : Regex} (N : Nfa r) (s : String) : Bool := Keel.Regex.Nfa.accepts N .search s.toList
 
 end Regex
 

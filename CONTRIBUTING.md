@@ -98,7 +98,8 @@ Listed here with the reason, and in `docs/traceability.toml` with
   it rests on lean-json's `from_json_to_json`; tested in `Props`.
 * **The pattern parser** (`Regex.compile`): Rust's regex syntax has no
   independent grammar to prove against; 4573 pattern-and-input cases are run
-  through pydantic. The matcher it produces is proved (`Proofs/Regex.lean`).
+  through pydantic. The matcher it produces is Keel's (`Keel.Regex`), proved
+  there and restated for this dialect in `Proofs/Regex.lean`.
 * **`Float`**: Lean's float operations are opaque externs, so the parse/print
   round trip is a property over random bit patterns (`toBits`), not a theorem.
 * **`PyDecimal`**: `str(Decimal)` and `Decimal(str)` are a port of CPython's

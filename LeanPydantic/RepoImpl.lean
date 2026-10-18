@@ -10,5 +10,4 @@ import LeanPydantic.RepoImpl.Choice
 import LeanPydantic.RepoImpl.Functional
 import LeanPydantic.RepoImpl.PyDecimal
 import LeanPydantic.RepoImpl.Regex.Match
-import LeanPydantic.RepoImpl.Regex.Nfa
 import LeanPydantic.RepoImpl.Regex.Parse

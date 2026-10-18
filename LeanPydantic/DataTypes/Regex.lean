@@ -1,16 +1,15 @@
+import Keel.DataTypes.Regex
+
 /-!
 # DataTypes: regular expressions for `pattern`
 
 pydantic checks `pattern` with Rust's `regex` crate (its default
-`regex_engine='rust-regex'`), as an unanchored search. These are the terms
-lean-pydantic compiles a pattern to. Matching is by partial derivatives
-(`RepoImpl/Regex.lean`), which needs no backtracking and does work per input
-character bounded by the pattern alone (`Proofs/Regex.lean`, `reach_length_le`).
-
-Zero-width assertions (`^`, `$`, `\b`, ...) are terms too. Whether one holds
-depends only on the characters on either side of the position, so the
-semantics (`Specifications/Regex.lean`) carries the character before and the
-character after each matched segment.
+`regex_engine='rust-regex'`), as an unanchored search. A pattern compiles
+to a `Keel.Regex` over this dialect's character classes: Keel supplies the
+terms, their meaning and the linear-time matcher (`Keel.Regex`), and this
+repository keeps the Rust dialect: its atoms (`\d`, `\w`, `\s` with Rust's
+Unicode tables, `.` without `\n`), its word characters, and its parser
+(`RepoImpl/Regex/Parse.lean`).
 -/
 
 namespace LeanPydantic.Regex
@@ -29,52 +28,16 @@ inductive Atom where
   | word
   /-- `\s`: Unicode white space. -/
   | space
-  deriving DecidableEq, Repr, Inhabited
+  deriving DecidableEq, Hashable, Repr, Inhabited
 
-/-- A character class: atoms closed under Rust's class operations. -/
-inductive Cls where
-  | atom (a : Atom)
-  /-- `[ab]` -/
-  | union (k l : Cls)
-  /-- `[a&&b]` -/
-  | inter (k l : Cls)
-  /-- `[a--b]` -/
-  | diff (k l : Cls)
-  /-- `[a~~b]` -/
-  | sym (k l : Cls)
-  /-- `[^a]`, `\D`, `\W`, `\S` -/
-  | neg (k : Cls)
-  deriving DecidableEq, Repr, Inhabited
+/-- A character class: atoms closed under Rust's class operations (`[ab]`,
+`[a&&b]`, `[a--b]`, `[a~~b]`, `[^a]`). -/
+abbrev Cls := Keel.Regex.Cls Atom
 
-/-- A zero-width assertion. -/
-inductive Assertion where
-  /-- `^`, `\A`: the start of the text. -/
-  | start
-  /-- `$`, `\z`: the end of the text (Rust's `$` does not match before a final `\n`). -/
-  | finish
-  /-- `\b` -/
-  | wordBoundary
-  /-- `\B` -/
-  | notWordBoundary
-  /-- `\<` -/
-  | wordStart
-  /-- `\>` -/
-  | wordEnd
-  deriving DecidableEq, Repr, Inhabited
+/-- A zero-width assertion (`^`, `$`, `\b`, `\B`, `\<`, `\>`). -/
+abbrev Assertion := Keel.Regex.Assertion
 
-/-- A regular expression. -/
-inductive Regex where
-  /-- Matches nothing. -/
-  | empty
-  /-- Matches the empty string. -/
-  | eps
-  /-- One character of a class. -/
-  | cls (k : Cls)
-  /-- The empty string, where the assertion holds. -/
-  | assert (a : Assertion)
-  | alt (r s : Regex)
-  | cat (r s : Regex)
-  | star (r : Regex)
-  deriving DecidableEq, Repr, Inhabited
+/-- A regular expression in the Rust dialect. -/
+abbrev Regex := Keel.Regex Cls
 
 end LeanPydantic.Regex

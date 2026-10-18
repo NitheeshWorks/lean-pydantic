@@ -355,10 +355,10 @@ id = "regex.pattern"
 upstream = "pydantic/tests/test_types.py::test_pattern"
 title = "pattern: Rust regex syntax, unanchored search, linear time, Unicode \\d \\w \\s"
 status = "implemented"
-realises = ["LeanPydantic.Regex.compile", "LeanPydantic.Regex.Regex.search", "LeanPydantic.Regex.ofSource"]
-theorem = ["LeanPydantic.Regex.Regex.derive_correct", "LeanPydantic.Regex.Regex.search_correct", "LeanPydantic.Regex.Regex.Nfa.search_eq", "LeanPydantic.Regex.Regex.pd_eq_lin", "LeanPydantic.Regex.Regex.reach_length_le", "LeanPydantic.Regex.ofSource_test", "LeanPydantic.theVerifiedRegex"]
+realises = ["LeanPydantic.Regex.compile", "LeanPydantic.Regex.Regex.search", "LeanPydantic.Regex.ofSource", "Keel.Regex.compile"]
+theorem = ["LeanPydantic.Regex.Regex.derive_correct", "LeanPydantic.Regex.Regex.search_correct", "LeanPydantic.Regex.Regex.Nfa.search_eq", "LeanPydantic.Regex.Regex.pd_eq_lin", "LeanPydantic.Regex.Regex.reach_length_le", "LeanPydantic.Regex.ofSource_test", "LeanPydantic.Regex.Regex.search_iff_accepts", "LeanPydantic.theVerifiedRegex"]
 test = ["tests/Conformance.lean::regexCases", "tests/Props.lean::properties"]
-notes = "The parser is tested against pydantic (4573 cases); the matcher is proved against the semantics in Specifications/Regex.lean."
+notes = "The parser is tested against pydantic (4573 cases). The matcher is Keel.Regex (lean-keel), over this dialect's classes (CharClass Atom: Rust's Unicode \\d \\w \\s tables, \\w as the word test); its laws are restated here for the Rust dialect, against the semantics in Specifications/Regex.lean (Search is Keel's Accepts in Mode.search, search_iff_accepts)."
 
 [[requirement]]
 id = "regex.unsupported-syntax"

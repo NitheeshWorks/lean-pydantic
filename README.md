@@ -139,6 +139,9 @@ checks they use only Lean's three axioms).
   per pattern, with their linear forms as tables, so a character costs one
   class test per live edge and no term is built; within a call the steps
   are cached by term set. Both are proved to be the scan (`Nfa.search_eq`).
+  The matcher and these laws are Keel's (`Keel.Regex`), shared with the rest
+  of the stack; this repository keeps the Rust dialect (its parser, its
+  Unicode classes and word characters) and restates the laws for it.
 * **Hostile sizes are linear.** Dict keys collapse through a hash index
   (`dedupIdx_eq`), an int string longer than 4300 digits is rejected before
   conversion, and decimal bounds never build `10 ^ exponent`
