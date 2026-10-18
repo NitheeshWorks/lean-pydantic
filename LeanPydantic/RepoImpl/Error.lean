@@ -240,6 +240,25 @@ def render (ctx : List (String × Json)) : List Piece → String
       | some (.num n) => ErrorKind.plural n
       | _ => "s") ++ render ctx ps
 
+mutual
+/-- A JSON value as pydantic holds it: jiter (and Python's `json.loads`)
+read every float as an `f64`, so an error shows `1e-400` as `0.0` and
+`1e400` as `Infinity`. Integers stay exact. -/
+def Json.asF64 : Json → Json
+  | .num (.float d) => .num (Number.ofFloat (Number.float d).toFloat)
+  | .arr ⟨xs⟩ => .arr ⟨Json.asF64List xs⟩
+  | .obj ⟨kvs⟩ => .obj ⟨Json.asF64Fields kvs⟩
+  | j => j
+/-- `asF64` on each element. -/
+def Json.asF64List : List Json → List Json
+  | [] => []
+  | x :: xs => Json.asF64 x :: Json.asF64List xs
+/-- `asF64` on each member's value. -/
+def Json.asF64Fields : List (String × Json) → List (String × Json)
+  | [] => []
+  | (k, v) :: r => (k, Json.asF64 v) :: Json.asF64Fields r
+end
+
 namespace ErrorDetails
 
 /-- The pydantic error `type`. -/
@@ -265,7 +284,7 @@ asked for. -/
 def toJson (e : ErrorDetails) (include_url := true) (include_context := true)
     (include_input := true) : Json :=
   .obj <| List.toArray <| [("type", .str e.type), ("loc", locJson e.loc), ("msg", .str e.msg)] ++
-    (if include_input then [("input", e.input)] else []) ++
+    (if include_input then [("input", Json.asF64 e.input)] else []) ++
     (if include_context ∧ e.ctx ≠ [] then [("ctx", .obj ⟨e.ctx⟩)] else []) ++
     (if include_url then [("url", .str e.url)] else [])
 

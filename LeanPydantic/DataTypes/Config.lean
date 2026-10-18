@@ -16,6 +16,16 @@ structure Cfg where
   from_attributes : Bool := false
   deriving DecidableEq, Repr, Inhabited
 
+/-- pydantic's `ser_json_inf_nan`: how a non-finite float dumps. -/
+inductive InfNan where
+  /-- `null` (pydantic's default) -/
+  | null
+  /-- `NaN`, `Infinity`, `-Infinity`, as bare tokens -/
+  | constants
+  /-- `"NaN"`, `"Infinity"`, `"-Infinity"` -/
+  | strings
+  deriving DecidableEq, Repr, Inhabited
+
 /-- `model_dump` options, named as in pydantic. `«include»` (`include` is a
 Lean keyword) and `exclude` name top-level fields. `exclude_unset` needs to
 know which fields were set: `set_from` is the input the value was validated
@@ -34,6 +44,8 @@ structure DumpOpts where
   validation sees it, which is how pydantic writes a JSON Schema default
   and compares a value with its default for `exclude_defaults`. -/
   serializers : Bool := true
+  /-- pydantic's `ser_json_inf_nan` (a config setting there). -/
+  ser_json_inf_nan : InfNan := .null
   deriving DecidableEq, Inhabited
 
 /-- The options that reach a nested value: pydantic applies `by_alias`,
@@ -43,7 +55,7 @@ value into the input. -/
 def DumpOpts.nested (o : DumpOpts) (set_from : Option LeanJson.Json := none) : DumpOpts :=
   { by_alias := o.by_alias, exclude_unset := o.exclude_unset,
     exclude_defaults := o.exclude_defaults, exclude_none := o.exclude_none, set_from,
-    serializers := o.serializers }
+    serializers := o.serializers, ser_json_inf_nan := o.ser_json_inf_nan }
 
 /-- The dump that validation reads back: every field, under its alias. -/
 def DumpOpts.roundTrip : DumpOpts := { by_alias := true }

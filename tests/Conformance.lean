@@ -246,6 +246,14 @@ def functionalCases : List Case :=
 
 /-- Cases written out by hand, for behaviour the table does not reach. -/
 def handCases : List Case := [
+  { upstream := "pydantic/tests/test_types.py::test_ser_json_inf_nan"
+    name := "float: ser_json_inf_nan null, constants, strings"
+    run := do
+      let xs : List Float := [0.0 / 0.0, 1.0 / 0.0, -1.0 / 0.0, 1.0]
+      let dump (m : InfNan) := LeanJson.printStr (toJson { ser_json_inf_nan := m } xs)
+      check "[null,null,null,1.0]" (dump .null)
+      <&&> check "[NaN,Infinity,-Infinity,1.0]" (dump .constants)
+      <&&> check "[\"NaN\",\"Infinity\",\"-Infinity\",1.0]" (dump .strings) },
   { upstream := "pydantic/tests/test_main.py::test_default_factory"
     name := "default_factory: no schema default, exclude_defaults against the factory"
     run := do

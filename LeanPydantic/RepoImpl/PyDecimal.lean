@@ -247,14 +247,24 @@ lenient `NaN`/`Infinity` tokens and the strings `"nan"`, `"inf"`,
 `"-infinity"` are accepted; a dump writes the shortest decimal that reads
 back (as Rust does) and `null` for the non-finite values (pydantic's default
 `ser_json_inf_nan='null'`). Tested, not proved: `NaN ≠ NaN`. -/
-def Scalar.plainFloat (strict : Bool) : Json → Except ErrorKind Float
+def Scalar.plainFloat (strict : Bool) (python : Bool) : Json → Except ErrorKind Float
+  | .num (.int i) =>
+    -- Python's `float(int)` overflows past the largest double; jiter's reads inf
+    let x := (Number.int i).toFloat
+    if python && x.isInf then .error .floatType else .ok x
   | .num n => .ok n.toFloat
   | .bool b => if strict then .error .floatType else .ok (if b then 1 else 0)
   | .str s => if strict then .error .floatType else (Coerce.strAsNumber s).map Number.toFloat
   | _ => .error .floatType
 
-instance : FromJson Float := ⟨"float", fun cfg j => liftKind cfg j (Scalar.plainFloat cfg.strict j), fun _ => true⟩
-instance : ToJson Float := ⟨fun _ x => if x.isFinite then .num (Number.ofFloat x) else .null⟩
+instance : FromJson Float := ⟨"float", fun cfg j => liftKind cfg j (Scalar.plainFloat cfg.strict (cfg.mode = .python) j), fun _ => true⟩
+instance : ToJson Float where
+  toJson opts x :=
+    if x.isFinite then .num (Number.ofFloat x) else
+    match opts.ser_json_inf_nan with
+    | .null => .null
+    | .constants => .num (Number.ofFloat x)
+    | .strings => .str (if x.isNaN then "NaN" else if x > 0 then "Infinity" else "-Infinity")
 instance : JsonSchema Float := ⟨.number []⟩
 
 instance : Keel.Ordered Float := { decLT := Float.decLt, decLE := Float.decLe }

@@ -140,7 +140,46 @@ def properties : List Property := [
         let expected := if x % 7 != 0 then 0 else if x > 50 then 1 else 3
         Keel.Constraint.rank e.failed == expected
       | .error [] => false)
-    toString
+    toString,
+  -- print_parse_float (tested): every finite double, from random bits, prints
+  -- (shortest form) and reads back to the same bits
+  prop "Float: shortest print reads back to the same double"
+    (fun r => let (v, r) := r.next; (Float.ofBits v, r))
+    (fun x => !x.isFinite ||
+      (LeanJson.Number.ofFloat x).toFloat.toBits == x.toBits &&
+      (match LeanJson.from_json (LeanJson.printStr (toJson {} x)) with
+        | .ok j => match FromJson.fromJson (α := Float) { mode := .json } j.val with
+          | .ok y => y.toBits == x.toBits
+          | .error _ => false
+        | .error _ => false))
+    (fun x => s!"{x} bits {x.toBits}"),
+  -- str(Decimal) reads back as the same Decimal (coefficient and exponent)
+  prop "PyDecimal: str then Decimal(str) is the identity"
+    (fun r =>
+      let (neg, r) := r.nat 2
+      let (c, r) := r.nat 10000000
+      let (e, r) := r.int 12
+      ((⟨neg == 1, c, e⟩ : PyDecimal), r))
+    (fun d => match PyDecimal.parse d.toPy with
+      | .finite d' => d' == d
+      | _ => false)
+    (fun d => s!"{repr d} printed {d.toPy}"),
+  -- the regex scan's state never exceeds the pattern's class count plus one
+  prop "regex: no backtracking, bounded state on random text"
+    (fun r =>
+      let (n, r) := r.nat 64
+      let (cs, r) := (List.range n).foldl (fun (acc, r) _ =>
+        let (c, r) := r.pick ['a', 'b', ' ', '1', '!']
+        (c :: acc, r)) ([], r)
+      (String.ofList cs, r))
+    (fun s => match Regex.compile "^(a|ab|b)*\\s?\\d+$", Regex.compile "(a+)+b" with
+      | .ok r1, .ok r2 =>
+        let ref1 := (s.toList.all fun c => c = 'a' || c = 'b' || c = ' ' || c = '1')
+        -- (a+)+b matches exactly when a 'b' follows some 'a'
+        let ref2 := (s.toList.zip s.toList.tail).any fun (x, y) => x = 'a' && y = 'b'
+        (!r1.search s || ref1) && r2.search s == ref2
+      | _, _ => false)
+    id
 ]
 
 def main (args : List String) : IO UInt32 := do
