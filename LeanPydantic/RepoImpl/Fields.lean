@@ -91,13 +91,13 @@ def wasSet (set_from : Option Json) (key : String) : Bool :=
 the fields `rest`. -/
 @[noinline]
 def field {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
-    (default : Option α) (rest : Fields β) : Fields (α × β) :=
+    (default : Option α) (rest : Fields β) (factory : Bool := false) : Fields (α × β) :=
   let key := alias.getD name
   { decode := fun cfg j => Keel.Validator.both (member cfg j key default) (rest.decode cfg j)
     encode := fun opts p =>
       let v := toJson (opts.nested (setMember opts.set_from key)) p.1
       let isDefault := match default with
-        | some d => decide (toJson {} p.1 = toJson {} d)
+        | some d => decide (toJson { serializers := false } p.1 = toJson { serializers := false } d)
         | none => false
       let rest' := rest.encode opts p.2
       if keep opts name v isDefault (wasSet opts.set_from key) then
@@ -106,7 +106,7 @@ def field {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] (name : Strin
     keys := key :: rest.keys
     props := (key, .annotated (JsonSchema.schema α)
       (if (JsonSchema.schema α).wantsTitle then some (fieldTitle key) else none)
-      (default.map (toJson {}))) :: rest.props
+      (if factory then none else default.map (toJson { serializers := false }))) :: rest.props
     required := if default.isSome then rest.required else key :: rest.required }
 
 variable {α β : Type}

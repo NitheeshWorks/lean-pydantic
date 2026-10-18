@@ -68,6 +68,40 @@ structure E2 where
   d : Dict Int
   deriving Model
 
+/-! Validators and serializers: pydantic's model
+```
+class M(BaseModel):
+    a: Annotated[int, AfterValidator(even)]
+    b: Annotated[int, BeforeValidator(strip)] = 0
+    c: Annotated[int, WrapValidator(wrap)] = 0
+    d: Annotated[int, PlainSerializer(lambda v: f'#{v}', return_type=str)] = 1
+    e: Annotated[list[int], WrapSerializer(lambda v, h: h(v)[:1])] = []
+```
+-/
+namespace Functional
+def even (v : Int) : Except String Int := if v % 2 != 0 then .error "must be even" else .ok v
+def strip : Json → Except String Json
+  | .str s => .ok (.str s.trimAscii.toString)
+  | j => .ok j
+def wrap (handler : Handler Int) : Json → Except Raise Int
+  | .str "none" => .ok 0
+  | j => match handler j with
+    | .ok v => .ok v
+    | .error _ => .error (.value "bad number")
+structure M where
+  a : After Int even
+  b : Before Int strip := 0
+  c : Wrap Int wrap := 0
+  d : Serialize Int (fun v => .str s!"#{v}") := 1
+  e : WrapSerialize (List Int) (fun h v => match h v with | .arr xs => .arr (xs.extract 0 1) | j => j) := {}
+  deriving Model
+/-- `x: list[int] = Field(default_factory=list)`, `y: int = Field(default_factory=lambda: 3)` -/
+structure F where
+  x : Factory (List Int) := []
+  y : Factory Int := 3
+  deriving Model
+end Functional
+
 /-! Regression (lean-fastapi report): models derived inside a namespace get
 their methods in that namespace, not under it twice. -/
 namespace Shop.Api
@@ -185,8 +219,37 @@ def schemaCases : List Case :=
         | none => pure false
         | some (_, s) => check expected (LeanJson.printStr s) }
 
+/-- `M.model_validate_json(input)`, then `model_dump_json()` or the errors,
+as pydantic printed them. -/
+def functionalTable : List (String × String) := [
+    ("{\"a\":3}", "[{\"type\":\"value_error\",\"loc\":[\"a\"],\"msg\":\"Value error, must be even\",\"input\":3,\"ctx\":{\"error\":\"must be even\"},\"url\":\"https://errors.pydantic.dev/2.14/v/value_error\"}]"),
+    ("{\"a\":\"x\"}", "[{\"type\":\"int_parsing\",\"loc\":[\"a\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"x\",\"url\":\"https://errors.pydantic.dev/2.14/v/int_parsing\"}]"),
+    ("{\"a\":2,\"b\":\" 7 \"}", "{\"a\":2,\"b\":7,\"c\":0,\"d\":\"#1\",\"e\":[]}"),
+    ("{\"a\":2,\"b\":\" x \"}", "[{\"type\":\"int_parsing\",\"loc\":[\"b\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"x\",\"url\":\"https://errors.pydantic.dev/2.14/v/int_parsing\"}]"),
+    ("{\"a\":2,\"c\":\"none\"}", "{\"a\":2,\"b\":0,\"c\":0,\"d\":\"#1\",\"e\":[]}"),
+    ("{\"a\":2,\"c\":\"q\"}", "[{\"type\":\"value_error\",\"loc\":[\"c\"],\"msg\":\"Value error, bad number\",\"input\":\"q\",\"ctx\":{\"error\":\"bad number\"},\"url\":\"https://errors.pydantic.dev/2.14/v/value_error\"}]"),
+    ("{\"a\":2,\"c\":5,\"d\":4,\"e\":[1,2]}", "{\"a\":2,\"b\":0,\"c\":5,\"d\":\"#4\",\"e\":[1]}")]
+
+def functionalCases : List Case :=
+  functionalTable.map fun (input, expected) =>
+    { upstream := "pydantic/tests/test_validators.py::test_annotated_validator_after"
+      name := s!"validators and serializers {input}"
+      run := check expected (match Functional.M.model_validate_json input with
+        | .ok m => m.val.model_dump_json
+        | .error e => e.json) }
+
 /-- Cases written out by hand, for behaviour the table does not reach. -/
 def handCases : List Case := [
+  { upstream := "pydantic/tests/test_main.py::test_default_factory"
+    name := "default_factory: no schema default, exclude_defaults against the factory"
+    run := do
+      check "{\"properties\":{\"x\":{\"items\":{\"type\":\"integer\"},\"title\":\"X\",\"type\":\"array\"},\"y\":{\"title\":\"Y\",\"type\":\"integer\"}},\"title\":\"F\",\"type\":\"object\"}"
+        (LeanJson.printStr Functional.F.model_json_schema)
+      <&&> check "{}" (({} : Functional.F).model_dump_json (exclude_defaults := true))
+      <&&> check "{\"x\":[1]}" (({ x := [1], y := 3 } : Functional.F).model_dump_json (exclude_defaults := true)) },
+  { upstream := "pydantic/tests/test_json_schema.py::test_serialization_validation_interaction"
+    name := "validators and serializers: schema defaults are validation values"
+    run := check "{\"properties\":{\"a\":{\"title\":\"A\",\"type\":\"integer\"},\"b\":{\"default\":0,\"title\":\"B\",\"type\":\"integer\"},\"c\":{\"default\":0,\"title\":\"C\",\"type\":\"integer\"},\"d\":{\"default\":1,\"title\":\"D\",\"type\":\"integer\"},\"e\":{\"default\":[],\"items\":{\"type\":\"integer\"},\"title\":\"E\",\"type\":\"array\"}},\"required\":[\"a\"],\"title\":\"M\",\"type\":\"object\"}" (LeanJson.printStr Functional.M.model_json_schema) },
   { upstream := "pydantic/tests/test_types.py::test_pattern"
     name := "pattern: no catastrophic backtracking (200000 characters)"
     run := do
@@ -265,7 +328,7 @@ def regexCases : List Case :=
           | .error _ => "error"
         if pat ∈ unsupportedPatterns then check "error" got else check expected got }
 
-def cases : List Case := tableCases ++ schemaCases ++ dumpCases ++ handCases ++ regexCases
+def cases : List Case := tableCases ++ schemaCases ++ dumpCases ++ handCases ++ regexCases ++ functionalCases
 
 def main (args : List String) : IO UInt32 := do
   let verbose := args.contains "-v"

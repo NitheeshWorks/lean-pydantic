@@ -69,33 +69,35 @@ theorem member_error [FromJson α] [JsonSchema α] [ToJson α] [LawfulJson α] {
   · obtain ⟨e', -, rfl⟩ := List.mem_map.1 he
     exact ⟨e'.loc, rfl⟩
 
+variable {factory : Bool}
+
 theorem keep_roundTrip (name : String) (v : Json) (b s : Bool) :
     keep DumpOpts.roundTrip name v b s = true := by
   simp [keep, DumpOpts.roundTrip]
 
 theorem encode_field [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
     (d : Option α) (rest : Fields β) (a : α) (b : β) :
-    (field name alias d rest).encode DumpOpts.roundTrip (a, b) =
+    (field name alias d rest factory).encode DumpOpts.roundTrip (a, b) =
       (alias.getD name, toJson DumpOpts.roundTrip a) :: rest.encode DumpOpts.roundTrip b := by
   simp only [field, keep_roundTrip, ite_true]
   rfl
 
 theorem field_keys [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
-    (d : Option α) (rest : Fields β) : (field name alias d rest).keys = alias.getD name :: rest.keys := rfl
+    (d : Option α) (rest : Fields β) : (field name alias d rest factory).keys = alias.getD name :: rest.keys := rfl
 
 theorem field_decode [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
     (d : Option α) (rest : Fields β) (cfg : Cfg) (j : Json) :
-    (field name alias d rest).decode cfg j =
+    (field name alias d rest factory).decode cfg j =
       Keel.Validator.both (member cfg j (alias.getD name) d) (rest.decode cfg j) := rfl
 
 theorem field_props [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
     (d : Option α) (rest : Fields β) :
-    ∃ t df, (field name alias d rest).props =
+    ∃ t df, (field name alias d rest factory).props =
       (alias.getD name, .annotated (JsonSchema.schema α) t df) :: rest.props := ⟨_, _, rfl⟩
 
 theorem field_required [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
     (d : Option α) (rest : Fields β) :
-    (field name alias d rest).required =
+    (field name alias d rest factory).required =
       if d.isSome then rest.required else alias.getD name :: rest.required := rfl
 
 /-! ## The laws -/
@@ -110,7 +112,7 @@ theorem nil_lawful : Fields.nil.Lawful where
 /-- **The field combinator is lawful.** -/
 theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {name : String}
     {alias : Option String} {d : Option α} {rest : Fields β} (hfresh : alias.getD name ∉ rest.keys)
-    (hr : rest.Lawful) : (field name alias d rest).Lawful where
+    (hr : rest.Lawful) : (field name alias d rest factory).Lawful where
   decode_encode cfg j p kvs h := by
     obtain ⟨a, b⟩ := p
     rw [field_keys] at h

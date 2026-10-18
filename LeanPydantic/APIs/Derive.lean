@@ -40,6 +40,12 @@ namespace LeanPydantic
 the field is used as an `Int`; only `deriving Model` reads the alias. -/
 abbrev Alias (_alias : String) (α : Type) : Type := α
 
+/-- A field whose default is pydantic's `Field(default_factory=…)`: the
+structure's default (`tags : Factory (List String) := []`), made afresh for
+each value as Lean always does, and, as in pydantic, not written into the
+JSON Schema. Like `Alias`, only `deriving Model` reads it. -/
+abbrev Factory (α : Type) : Type := α
+
 end LeanPydantic
 
 namespace LeanPydantic.Derive
@@ -53,6 +59,11 @@ def aliasOf? (ty : Expr) : Option String :=
     | .lit (.strVal s) => some s
     | _ => none
   else none
+
+/-- Whether a field type is `Factory T`, possibly under `Alias`. -/
+def isFactory (ty : Expr) : Bool :=
+  let ty := if ty.isAppOfArity ``LeanPydantic.Alias 2 then ty.appArg! else ty
+  ty.isAppOfArity ``LeanPydantic.Factory 1
 
 /-- `Prod.fst (Prod.snd (… p))`, `i` `snd`s deep. -/
 def projAt {m : Type → Type} [Monad m] [MonadQuotation m] (p : Term) : Nat → m Term
@@ -124,7 +135,8 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
           liftCoreM <| compileDecls #[d]
         `(some $(mkIdent (`_root_ ++ d)))
       | none => `(none)
-    fieldsStx ← `(LeanPydantic.Fields.field $nameLit $aliasStx $dflt $fieldsStx)
+    let factoryStx ← if isFactory fty then `(true) else `(false)
+    fieldsStx ← `(LeanPydantic.Fields.field $nameLit $aliasStx $dflt $fieldsStx $factoryStx)
     lawStx ← `(LeanPydantic.Fields.field_lawful (by decide) $lawStx)
   -- into: the tuple of fields; back: the constructor applied to its parts
   let x := mkIdent `x

@@ -7,5 +7,6 @@ import LeanPydantic.RepoImpl.Scalars
 import LeanPydantic.RepoImpl.Fields
 import LeanPydantic.RepoImpl.Containers
 import LeanPydantic.RepoImpl.Choice
+import LeanPydantic.RepoImpl.Functional
 import LeanPydantic.RepoImpl.Regex.Match
 import LeanPydantic.RepoImpl.Regex.Parse
