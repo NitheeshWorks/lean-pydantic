@@ -65,7 +65,7 @@ structure VerifiedModel : Prop where
   /-- The field combinator preserves the laws. -/
   fieldLawful : ∀ (α β : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (name : String)
     (alias : Option String) (d : Option α) (rest : Fields β) (factory byName : Bool), alias.getD name ∉ rest.keys →
-      rest.Lawful → (Fields.field name alias d rest factory byName).Lawful
+      name ∉ rest.names → rest.Lawful → (Fields.field name alias d rest factory byName).Lawful
   /-- A field read by its key alone keeps the schema law. -/
   fieldSound : ∀ (α β : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (name : String)
     (alias : Option String) (d : Option α) (rest : Fields β) (factory : Bool),
@@ -141,14 +141,26 @@ structure VerifiedSurface : Prop where
     (j : Json) (a : α), Choices.exactly (τ := α ⊕ β) cfg j = none →
       fromJson (α := α) cfg.strictly j = .ok a → fromJson (α := α ⊕ β) cfg j = .ok (.inl a)
   /-- `exclude_unset_subset`: an `exclude_unset` dump writes only fields set in the input. -/
-  excludeUnsetSubset : ∀ (α : Type) [m : Model α] [LawfulFields α] (a : α) (j : Json),
-    ∃ kvs, Model.model_dump a (by_alias := true) (exclude_unset := true) (set_from := some j) = .obj ⟨kvs⟩ ∧
-      ∀ p ∈ kvs, p.1 ∈ m.fields.fieldsSet m.extra (some j) .python
+  excludeUnsetSubset : ∀ (α : Type) [m : Model α] [LawfulFields α] (a : α) (j : Json) (by_alias : Bool),
+    ∃ kvs, Model.model_dump a (by_alias := by_alias) (exclude_unset := true) (set_from := some j) = .obj ⟨kvs⟩ ∧
+      ∀ p ∈ kvs, (∃ q ∈ Model.setFieldsOf (α := α) (some j) .python,
+          q.1 ∈ m.fields.fieldsSet m.extra (some j) .python ∧ p.1 = Fields.dumpKey by_alias q) ∨
+        p.1 ∈ m.fields.extraKeys m.extra (some j) .python
   /-- The same, in the form users call: a validated model remembers its
-  input, so no `set_from` is passed (`Valid.exclude_unset_subset`). -/
-  validExcludeUnsetSubset : ∀ (α : Type) [Model α] [LawfulFields α] (cfg : Cfg) (obj : Json) (v : Valid α cfg obj),
-    ∃ kvs, v.model_dump (by_alias := true) (exclude_unset := true) = .obj ⟨kvs⟩ ∧
-      ∀ p ∈ kvs, p.1 ∈ v.model_fields_set
+  input, so no `set_from` is passed (`Valid.exclude_unset_subset`); a field
+  is written only if its name is in `model_fields_set`. -/
+  validExcludeUnsetSubset : ∀ (α : Type) [m : Model α] [LawfulFields α] (cfg : Cfg) (obj : Json)
+    (v : Valid α cfg obj) (by_alias : Bool),
+    ∃ kvs, v.model_dump (by_alias := by_alias) (exclude_unset := true) = .obj ⟨kvs⟩ ∧
+      ∀ p ∈ kvs, p.1 ∈ v.model_fields_set ∨
+        ∃ q ∈ m.fields.names.zip m.fields.keys, q.1 ∈ v.model_fields_set ∧ p.1 = q.2
+  /-- And every field whose name is in `model_fields_set` is written
+  (`Valid.exclude_unset_complete`). -/
+  validExcludeUnsetComplete : ∀ (α : Type) [m : Model α] [LawfulFields α] (cfg : Cfg) (obj : Json)
+    (v : Valid α cfg obj) (by_alias : Bool) (q : String × String), q ∈ m.fields.names.zip m.fields.keys →
+      q.1 ∈ v.model_fields_set →
+      ∃ kvs, v.model_dump (by_alias := by_alias) (exclude_unset := true) = .obj ⟨kvs⟩ ∧
+        ∃ k ∈ kvs.map Prod.fst, k = Fields.dumpKey by_alias q
   /-- `schema_complete` for scalars: every input their schema allows validates. -/
   completeBool : ∀ cfg, SchemaComplete Bool cfg
   completeString : ∀ cfg, SchemaComplete String cfg
@@ -175,7 +187,7 @@ theorem theVerifiedWrappers : VerifiedWrappers where
   refinedIff _ _ _ c cfg j y := fromJson_refined_iff c cfg j y
 
 theorem theVerifiedModel : VerifiedModel where
-  fieldLawful _ _ _ _ _ _ _ _ _ _ _ _ h hr := Fields.field_lawful h hr
+  fieldLawful _ _ _ _ _ _ _ _ _ _ _ _ h hn hr := Fields.field_lawful h hn hr
   fieldSound _ _ _ _ _ _ _ _ _ _ _ hr := Fields.field_sound hr
   validateDump _ _ _ a strict := Model.model_validate_model_dump a strict
   schemaSound _ _ _ _ _ h := Model.schema_sound h
@@ -192,8 +204,9 @@ theorem theVerifiedSurface : VerifiedSurface where
   enumLawful _ _ _ := inferInstance
   unionSmartLeftmost _ _ _ _ _ _ cfg j a h hx := union_smart_leftmost cfg j a h hx
   unionSmartStrict _ _ _ _ _ _ cfg j a hn h := union_smart_strict cfg j a hn h
-  excludeUnsetSubset _ _ _ a j := Model.exclude_unset_subset a j
-  validExcludeUnsetSubset _ _ _ _ _ v := Valid.exclude_unset_subset v
+  excludeUnsetSubset _ _ _ a j b := Model.exclude_unset_subset a j b
+  validExcludeUnsetSubset _ _ _ _ _ v b := Valid.exclude_unset_subset v b
+  validExcludeUnsetComplete _ _ _ _ _ v b _ hq hs := Valid.exclude_unset_complete v b hq hs
   completeBool := schema_complete_bool
   completeString := schema_complete_string
   completeFloat := schema_complete_float

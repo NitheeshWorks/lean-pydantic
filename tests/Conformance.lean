@@ -278,6 +278,33 @@ def dumpAs (α : Type) [FromJson α] [ToJson α] (input : String) (o : Bool × B
         { by_alias := ba, exclude_unset := eu, exclude_none := en, exclude_defaults := ed, set_from := some j.val }
       LeanJson.printStr (toJson o a.val)
 
+/-- Validate `input` (Python objects or JSON text), then `model_fields_set`,
+sorted, as a JSON array. -/
+def fieldsSetAs (α : Type) [Model α] (mode input : String) : String :=
+  let show' (l : List String) : String :=
+    LeanJson.printStr (.arr ⟨(l.mergeSort (fun a b => decide (a ≤ b))).map fun s => (.str s : Json)⟩)
+  if mode = "json" then
+    match validateJsonWith α false input with
+    | .ok a => show' a.model_fields_set
+    | .error e => e.json
+  else
+    match LeanJson.from_json input with
+    | .ok j =>
+      match validateWith α {} j.val with
+      | .ok a => show' a.model_fields_set
+      | .error e => e.json
+    | .error _ => "<input is not JSON>"
+
+def dispatchFieldsSet (tag : String) : Option (String → String → String) :=
+  match tag with
+  | "shop" => some (fieldsSetAs Shop)
+  | "extra_forbid" => some (fieldsSetAs ExtraForbid)
+  | "extra_allow" => some (fieldsSetAs ExtraAllow)
+  | "extra_pop" => some (fieldsSetAs ExtraPop)
+  | "extra_alias_allow" => some (fieldsSetAs ExtraAliasAllow)
+  | "form_data" => some (fieldsSetAs FormData)
+  | _ => none
+
 def dispatchDump (tag : String) : Option (String → Bool × Bool × Bool × Bool → String) :=
   match tag with
   | "shop" => some (dumpAs Shop)
@@ -363,7 +390,7 @@ def handCases : List Case := [
       let js := match ExtraAllow.model_validate_json "{\"z\": 1, \"a\": 1, \"b\": \"q\"}" with
         | .ok v => extraReport v.toValid
         | .error e => e.json
-      check "(some {\"z\":1,\"b\":\"q\"}) [a, B, z, b] {\"a\":1,\"b\":\"q\",\"z\":1}" py
+      check "(some {\"z\":1,\"b\":\"q\"}) [a, b, z] {\"a\":1,\"b\":\"q\",\"z\":1}" py
       <&&> check "(some {\"z\":1}) [a, z] {\"a\":1,\"b\":\"x\",\"z\":1}" js },
   { upstream := "pydantic/tests/test_main.py::test_model_extra_is_none_when_extra_is_forbid"
     name := "extra='forbid' and 'ignore': model_extra is None"
@@ -553,6 +580,14 @@ def reprCases : List Case :=
         | none => pure false
         | some (_, _, g) => check expected (g mode strict out input) }
 
+def fieldsSetCases : List Case :=
+  fieldsSetTable.map fun (tag, mode, input, expected) =>
+    { upstream := "pydantic/tests/test_main.py::test_fields_set"
+      name := s!"model_fields_set {tag} {mode} {input.take 40}"
+      run := match dispatchFieldsSet tag with
+        | none => pure false
+        | some f => check expected (f mode input) }
+
 def dumpCases : List Case :=
   dumpTable.map fun (up, tag, input, o, expected) =>
     { upstream := up
@@ -579,7 +614,7 @@ def regexCases : List Case :=
           | .error _ => "error"
         if pat ∈ unsupportedPatterns then check "error" got else check expected got }
 
-def cases : List Case := tableCases ++ schemaCases ++ reprCases ++ dumpCases ++ handCases ++ regexCases ++ functionalCases
+def cases : List Case := tableCases ++ schemaCases ++ reprCases ++ fieldsSetCases ++ dumpCases ++ handCases ++ regexCases ++ functionalCases
 
 def main (args : List String) : IO UInt32 := do
   let verbose := args.contains "-v"

@@ -307,34 +307,74 @@ theorem schema_sound [LawfulModel α] {obj : Json} {a : α} (h : (model_validate
 theorem model_dump_conforms [LawfulModel α] (a : α) : Conforms (JsonSchema.schema α) (model_dump a (by_alias := true)) :=
   LawfulJson.schema_sound { strict := true } _ a rfl (LawfulJson.fromJson_toJson _ a)
 
-/-- An `exclude_unset` dump by alias writes only keys in `fieldsSet`. -/
-theorem dump_unset_subset [hl : LawfulFields α] (o : DumpOpts) (a : α)
-    (hu : o.exclude_unset = true) (ha : o.by_alias = true) :
-    ∀ p ∈ m.fields.encode { o with set_names := m.fields.extraKeys m.extra o.set_from o.set_mode } (m.into a) ++
-        (if m.extra = .allow then m.fields.extraDump o else []),
-      p.1 ∈ m.fields.fieldsSet m.extra o.set_from o.set_mode := fun p hp => by
+/-- The fields of a value validated from `src` (in `mode`) that count as
+set, as (name, key): their names are its `model_fields_set`. -/
+def setFieldsOf (src : Option Json) (mode : InputMode) : List (String × String) :=
+  m.fields.setFields src (m.fields.extraKeys m.extra src mode)
+
+/-- The members a dump writes: the fields, then (under `allow`) the extras. -/
+def dumpMembers (o : DumpOpts) (a : α) : List (String × Json) :=
+  m.fields.encode { o with set_names := m.fields.extraKeys m.extra o.set_from o.set_mode } (m.into a) ++
+    (if m.extra = .allow then m.fields.extraDump o else [])
+
+theorem toJson_members (o : DumpOpts) (a : α) : toJson o a = .obj ⟨dumpMembers (α := α) o a⟩ := rfl
+
+/-- A field counts as set exactly when its name is in `model_fields_set`. -/
+theorem mem_fieldsSet_iff [hl : LawfulFields α] (src : Option Json) (mode : InputMode) {q : String × String}
+    (hq : q ∈ m.fields.names.zip m.fields.keys) :
+    q.1 ∈ m.fields.fieldsSet m.extra src mode ↔ q ∈ setFieldsOf (α := α) src mode :=
+  Fields.mem_fieldsSet_iff hl.lawful m.extra src mode hq
+
+/-- Under `exclude_unset` a dump writes only fields counted as set (under
+their name, or by alias their key) and extras. -/
+theorem dump_unset_subset [hl : LawfulFields α] (o : DumpOpts) (a : α) (hu : o.exclude_unset = true) :
+    ∀ p ∈ dumpMembers (α := α) o a, (∃ q ∈ setFieldsOf (α := α) o.set_from o.set_mode, p.1 = Fields.dumpKey o.by_alias q) ∨
+      p.1 ∈ m.fields.extraKeys m.extra o.set_from o.set_mode := fun p hp => by
   rcases List.mem_append.1 hp with hp | hp
-  · exact List.mem_append_left _
-      (hl.lawful.unset_subset { o with set_names := m.fields.extraKeys m.extra o.set_from o.set_mode } (m.into a) hu ha p hp)
+  · exact Or.inl (hl.lawful.unset_subset { o with set_names := m.fields.extraKeys m.extra o.set_from o.set_mode }
+      (m.into a) hu p hp)
   · split at hp
     · rename_i hx
       have := Fields.extraDump_key _ o p hp
       rw [← hx] at this
-      exact List.mem_append_right _ this
+      exact Or.inr this
     · simp at hp
 
-/-- **`exclude_unset` dumps only what was set** (`exclude_unset_subset`): a
-dump by alias of a value validated from `j`, with `exclude_unset`, writes
-only keys in its `model_fields_set` (fields `j` set, by key or, under
-`populate_by_name`, by name, or named by an extra; and extras), whatever the
-other options. -/
-theorem exclude_unset_subset [LawfulFields α] (a : α) (j : Json)
+/-- With no other option leaving one out, an `exclude_unset` dump writes
+every field counted as set. -/
+theorem dump_unset_complete [hl : LawfulFields α] (o : DumpOpts) (a : α) (hu : o.exclude_unset = true)
+    (hi : o.«include» = none) (he : o.exclude = []) (hn : o.exclude_none = false) (hd : o.exclude_defaults = false) :
+    ∀ q ∈ setFieldsOf (α := α) o.set_from o.set_mode, ∃ p ∈ dumpMembers (α := α) o a, p.1 = Fields.dumpKey o.by_alias q :=
+  fun q hq => by
+    obtain ⟨p, hp, hpe⟩ := hl.lawful.unset_complete { o with set_names := m.fields.extraKeys m.extra o.set_from o.set_mode }
+      (m.into a) hu hi he hn hd q hq
+    exact ⟨p, List.mem_append_left _ hp, hpe⟩
+
+/-- **`exclude_unset` dumps exactly what was set** (`exclude_unset_subset`):
+a dump of a value validated from `j`, with `exclude_unset`, writes a field
+only if its name is in `model_fields_set` (it was set by key, by name under
+`populate_by_name`, or by an extra of that name), under its name or, by
+alias, its key; every other member is an extra. -/
+theorem exclude_unset_subset [LawfulFields α] (a : α) (j : Json) (by_alias : Bool := false)
     («include» : Option (List String) := none) (exclude : List String := [])
     (exclude_defaults exclude_none : Bool := false) :
-    ∃ kvs, model_dump a «include» exclude (by_alias := true) (exclude_unset := true)
+    ∃ kvs, model_dump a «include» exclude by_alias (exclude_unset := true)
         exclude_defaults exclude_none (set_from := some j) = .obj ⟨kvs⟩ ∧
-      ∀ p ∈ kvs, p.1 ∈ m.fields.fieldsSet m.extra (some j) .python :=
-  ⟨_, rfl, dump_unset_subset _ a rfl rfl⟩
+      ∀ p ∈ kvs, (∃ q ∈ setFieldsOf (α := α) (some j) .python, q.1 ∈ m.fields.fieldsSet m.extra (some j) .python ∧
+          p.1 = Fields.dumpKey by_alias q) ∨ p.1 ∈ m.fields.extraKeys m.extra (some j) .python :=
+  ⟨_, rfl, fun p hp => by
+    rcases dump_unset_subset (α := α) _ a rfl p hp with ⟨q, hq, he⟩ | h
+    · exact Or.inl ⟨q, hq, List.mem_append_left _ (List.mem_map_of_mem hq), he⟩
+    · exact Or.inr h⟩
+
+/-- **And every field whose name is in `model_fields_set` is written**, when
+no other option leaves it out. -/
+theorem exclude_unset_complete [LawfulFields α] (a : α) (j : Json) (by_alias : Bool := false)
+    {q : String × String} (hq : q ∈ m.fields.names.zip m.fields.keys)
+    (hs : q.1 ∈ m.fields.fieldsSet m.extra (some j) .python) :
+    ∃ kvs, model_dump a (by_alias := by_alias) (exclude_unset := true) (set_from := some j) = .obj ⟨kvs⟩ ∧
+      ∃ p ∈ kvs, p.1 = Fields.dumpKey by_alias q :=
+  ⟨_, rfl, dump_unset_complete (α := α) _ a rfl rfl rfl rfl rfl q ((mem_fieldsSet_iff (α := α) _ _ hq).1 hs)⟩
 
 end Model
 
@@ -407,24 +447,55 @@ instance : PyRepr (Valid α cfg obj) := ⟨fun _ _ v => PyRepr.reprIn (some obj)
 instance : ToString (Valid α cfg obj) := ⟨fun v => Model.strWith (Model.reprArgsIn (some obj) cfg.mode v.val)⟩
 
 /-- **`exclude_unset` dumps only what was set**, with no input to pass: a
-validated model's dump by alias writes only keys in its `model_fields_set`. -/
-theorem exclude_unset_subset [LawfulFields α] (v : Valid α cfg obj)
+validated model's dump writes a field only if its name is in
+`model_fields_set`, under its name or, by alias, its key; every other member
+is one of its extras' keys, also in `model_fields_set`. -/
+theorem exclude_unset_subset [LawfulFields α] (v : Valid α cfg obj) (by_alias : Bool := false)
     («include» : Option (List String) := none) (exclude : List String := [])
     (exclude_defaults exclude_none : Bool := false) :
-    ∃ kvs, v.model_dump «include» exclude (by_alias := true) (exclude_unset := true)
+    ∃ kvs, v.model_dump «include» exclude by_alias (exclude_unset := true)
         exclude_defaults exclude_none = .obj ⟨kvs⟩ ∧
-      ∀ p ∈ kvs, p.1 ∈ v.model_fields_set := by
-  let o := validOpts «include» exclude true true exclude_defaults exclude_none obj cfg.mode
-  have hs := Model.dump_unset_subset (α := α) o v.val rfl rfl
+      ∀ p ∈ kvs, p.1 ∈ v.model_fields_set ∨
+        ∃ q ∈ m.fields.names.zip m.fields.keys, q.1 ∈ v.model_fields_set ∧ p.1 = q.2 := by
+  let o := validOpts «include» exclude by_alias true exclude_defaults exclude_none obj cfg.mode
+  have hs : ∀ p ∈ Model.dumpMembers (α := α) o v.val, p.1 ∈ v.model_fields_set ∨
+      ∃ q ∈ m.fields.names.zip m.fields.keys, q.1 ∈ v.model_fields_set ∧ p.1 = q.2 := fun p hp => by
+    rcases Model.dump_unset_subset (α := α) o v.val rfl p hp with ⟨q, hq, he⟩ | h
+    · have hz := (inferInstance : LawfulFields α).lawful.setFields_sub _ _ q hq
+      have hn : q.1 ∈ v.model_fields_set := List.mem_append_left _ (List.mem_map_of_mem hq)
+      cases hb : by_alias
+      · exact Or.inl (by rw [he]; simp only [o, validOpts, hb, Fields.dumpKey]; exact hn)
+      · exact Or.inr ⟨q, hz, hn, by rw [he]; simp [o, validOpts, hb, Fields.dumpKey]⟩
+    · left
+      show p.1 ∈ Fields.fieldsSet _ _ _ _
+      simp only [Fields.fieldsSet, List.mem_append, List.mem_filter]
+      by_cases hc : p.1 ∈ (m.fields.setFields (some obj) (m.fields.extraKeys m.extra (some obj) cfg.mode)).map Prod.fst
+      · exact Or.inl hc
+      · exact Or.inr ⟨h, by simpa using hc⟩
   unfold model_dump
-  simp only [Model.toJson_eq, Fields.dump]
+  rw [Model.toJson_members]
   split <;> rename_i hx
   · refine ⟨_, rfl, fun p hp => ?_⟩
     rcases Fields.dedup_key _ [] p hp with h | h
     · simp at h
     · obtain ⟨q, hq, he⟩ := List.mem_map.1 h
-      rw [← he]; exact hs q (by simpa [hx] using hq)
-  · exact ⟨_, rfl, fun p hp => hs p (by simpa [hx] using hp)⟩
+      rw [← he]; exact hs q (by simpa [pyDict] using hq)
+  · exact ⟨_, rfl, fun p hp => hs p (by simpa [pyDict] using hp)⟩
+
+/-- **And every field whose name is in `model_fields_set` is written** by an
+`exclude_unset` dump (under its name, or by alias its key). -/
+theorem exclude_unset_complete [LawfulFields α] (v : Valid α cfg obj) (by_alias : Bool := false)
+    {q : String × String} (hq : q ∈ m.fields.names.zip m.fields.keys) (hs : q.1 ∈ v.model_fields_set) :
+    ∃ kvs, v.model_dump (by_alias := by_alias) (exclude_unset := true) = .obj ⟨kvs⟩ ∧
+      ∃ k ∈ kvs.map Prod.fst, k = Fields.dumpKey by_alias q := by
+  let o := validOpts none [] by_alias true false false obj cfg.mode
+  obtain ⟨p, hp, hpe⟩ := Model.dump_unset_complete (α := α) o v.val rfl rfl rfl rfl rfl q
+    ((Model.mem_fieldsSet_iff (α := α) _ _ hq).1 hs)
+  unfold model_dump
+  rw [Model.toJson_members]
+  split
+  · exact ⟨_, rfl, p.1, Fields.mem_dedup_keys (List.mem_map_of_mem hp), hpe⟩
+  · exact ⟨_, rfl, p.1, List.mem_map_of_mem hp, hpe⟩
 
 end Valid
 

@@ -456,6 +456,30 @@ for k, ch in enumerate(vchunks):
 print('def validationTable : %s :=' % VT)
 print('  ' + ' ++ '.join('validationTable%d' % k for k in range(len(vchunks))))
 print()
+# model_fields_set (sorted) of each validated input, by alias and by name,
+# from Python objects and from JSON text
+FS_TAGS = {'extra_forbid', 'extra_allow', 'extra_pop', 'extra_alias_allow', 'shop', 'form_data'}
+FS_EXTRA = [('extra_allow', ['{"a":1,"b":"v"}', '{"a":1,"B":"w","b":"v"}', '{"a":1,"B":"w"}', '{"b":"v","a":2,"q":1}']),
+            ('extra_pop', ['{"a":1,"b":"v"}', '{"a":1,"B":"w"}', '{"a":1,"B":"w","b":"v"}']),
+            ('extra_alias_allow', ['{"a":"x","alias_b":"y"}', '{"alias_a":"x","b":"y"}', '{}'])]
+fs_rows = []
+fs_seen = set()
+for tag, inputs in [(t, i) for t, i, _ in ROWS if t in FS_TAGS] + FS_EXTRA:
+    for text in inputs:
+        for mode in ('python', 'json'):
+            if (tag, mode, text) in fs_seen or (mode == 'python' and not python_ok(text)): continue
+            fs_seen.add((tag, mode, text))
+            ta = TypeAdapter(TYPES[tag])
+            try:
+                v = ta.validate_json(text) if mode == 'json' else ta.validate_python(json.loads(text))
+            except ValidationError:
+                continue
+            fs_rows.append((tag, mode, text, json.dumps(sorted(v.model_fields_set), separators=(',', ':'))))
+print('/-- (type tag, mode, input, sorted `model_fields_set` of the validated model) -/')
+print('def fieldsSetTable : List (String × String × String × String) := [')
+print(',\n'.join('  (%s, %s, %s, %s)' % (lean_str(t), lean_str(m), lean_str(i), lean_str(o)) for t, m, i, o in fs_rows))
+print(']')
+print()
 print('/-- (upstream test, type tag, input, (by_alias, exclude_unset, exclude_none, exclude_defaults), pydantic dump) -/')
 print('def dumpTable : List (String × String × String × (Bool × Bool × Bool × Bool) × String) := [')
 print(',\n'.join('  (%s, %s, %s, (%s), %s)' % (lean_str(r), lean_str(t), lean_str(i), ', '.join('true' if b else 'false' for b in o), lean_str(out))

@@ -136,8 +136,10 @@ checks they use only Lean's three axioms).
   derived enums of lawful types have the round trip and schema soundness
   (`VerifiedSurface`). Smart unions pick the leftmost exact strict match,
   then the leftmost strict one (`union_smart_leftmost`, `union_smart_strict`).
-* **`exclude_unset` writes only what was set** (`Model.exclude_unset_subset`):
-  only keys in `model_fields_set`, for every derived model, as a law of the
+* **`exclude_unset` writes exactly what was set**: a field is dumped iff its
+  name is in `model_fields_set` (field names and extras' keys, as pydantic),
+  under its name or by alias its key (`Valid.exclude_unset_subset`,
+  `Valid.exclude_unset_complete`), for every derived model, as a law of the
   field combinator.
 * **Schemas are complete for scalars**: every input the schema of `bool`,
   `str`, `float` or `Optional` of them allows validates (`schema_complete_*`).

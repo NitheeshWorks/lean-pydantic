@@ -144,6 +144,22 @@ theorem mem_ite_cons {γ : Type} {c : Bool} {x p : γ} {l : List γ} (h : p ∈ 
     · exact Or.inl ⟨h, rfl⟩
     · exact Or.inr h
 
+theorem mem_ite_singleton {γ : Type} {c : Bool} {x q : γ} (h : q ∈ (if c = true then [x] else [])) :
+    c = true ∧ q = x := by
+  cases c
+  · simp at h
+  · simpa using h
+
+theorem ite_cons_mem_head {γ : Type} {c : Bool} {x : γ} {l : List γ} (h : c = true) :
+    x ∈ (if c = true then x :: l else l) := by
+  rw [if_pos h]; exact List.mem_cons_self
+
+theorem mem_ite_cons_of_mem {γ : Type} {c : Bool} {x p : γ} {l : List γ} (h : p ∈ l) :
+    p ∈ (if c = true then x :: l else l) := by
+  cases c
+  · simpa using h
+  · exact List.mem_cons_of_mem _ h
+
 theorem keep_unset {o : DumpOpts} {n : String} {v : Json} {d s : Bool} (h : keep o n v d s = true)
     (hu : o.exclude_unset = true) : s = true := by
   cases s
@@ -159,7 +175,11 @@ theorem nil_lawful : Fields.nil.Lawful where
   encode_keys _ := rfl
   ne_nil _ _ _ := nofun
   loc_key _ _ _ _ h := nomatch h
-  unset_subset _ _ _ _ _ h := nomatch h
+  unset_subset _ _ _ _ h := nomatch h
+  unset_complete _ _ _ _ _ _ _ _ h := nomatch h
+  names_nodup := List.nodup_nil
+  setFields_sub _ _ _ h := nomatch h
+  names_set _ _ _ h := nomatch h
 
 theorem nil_sound : Fields.nil.Sound where
   by_key := rfl
@@ -168,7 +188,21 @@ theorem nil_sound : Fields.nil.Sound where
 /-- **The field combinator is lawful**, with or without `populate_by_name`. -/
 theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {name : String}
     {alias : Option String} {d : Option α} {rest : Fields β} (hfresh : alias.getD name ∉ rest.keys)
-    (hr : rest.Lawful) : (field name alias d rest factory byName).Lawful where
+    (hname : name ∉ rest.names) (hr : rest.Lawful) : (field name alias d rest factory byName).Lawful where
+  names_nodup := List.nodup_cons.2 ⟨hname, hr.names_nodup⟩
+  setFields_sub sf ns q hq := by
+    dsimp only [field] at hq ⊢
+    rw [List.zip_cons_cons]
+    rcases List.mem_append.1 hq with hq | hq
+    · obtain ⟨-, rfl⟩ := mem_ite_singleton hq
+      exact List.mem_cons_self
+    · exact List.mem_cons_of_mem _ (hr.setFields_sub sf ns q hq)
+  names_set sf ns q hq hn := by
+    dsimp only [field] at hq ⊢
+    rw [List.zip_cons_cons] at hq
+    rcases List.mem_cons.1 hq with rfl | hq
+    · exact List.mem_append_left _ (by simp [isSet, hn])
+    · exact List.mem_append_right _ (hr.names_set sf ns q hq hn)
   lookups_head := by
     show (if byName then [alias.getD name, name] else [alias.getD name]).head? :: rest.lookups.map List.head? =
       some (alias.getD name) :: rest.keys.map some
@@ -229,13 +263,22 @@ theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {
         · exact ⟨k, Or.inl (List.mem_cons_of_mem _ hk), l, hl⟩
         · exact ⟨k, Or.inr (List.mem_cons_of_mem _ hk), l, hl⟩
       · simp at he
-  unset_subset o b hu ha p hp := by
+  unset_subset o b hu p hp := by
     obtain ⟨a, b⟩ := b
     simp only [field] at hp ⊢
     rcases mem_ite_cons hp with ⟨rfl, hk⟩ | hp
     · have := keep_unset hk hu
-      simp [this, ha]
-    · exact List.mem_append_right _ (hr.unset_subset o b hu ha p hp)
+      exact ⟨(name, alias.getD name), List.mem_append_left _ (by simp [this]), by simp only [dumpKey]⟩
+    · obtain ⟨q, hq, he⟩ := hr.unset_subset o b hu p hp
+      exact ⟨q, List.mem_append_right _ hq, he⟩
+  unset_complete o b hu hi he hn hd q hq := by
+    obtain ⟨a, b⟩ := b
+    dsimp only [field] at hq ⊢
+    rcases List.mem_append.1 hq with hq | hq
+    · obtain ⟨hs, rfl⟩ := mem_ite_singleton hq
+      exact ⟨_, ite_cons_mem_head (by simp [keep, hu, hi, he, hn, hd, hs]), by simp only [dumpKey]⟩
+    · obtain ⟨p, hp, hpe⟩ := hr.unset_complete o b hu hi he hn hd q hq
+      exact ⟨p, mem_ite_cons_of_mem hp, hpe⟩
 
 /-- **The field combinator keeps the schema law**, for a field read by its
 key alone. -/
@@ -581,6 +624,82 @@ theorem dedup_key {γ : Type} :
       · exact Or.inr (by simp only [List.map_cons, List.mem_cons]; exact Or.inl (he ▸ h'))
       · exact Or.inl (he ▸ h')
     · exact Or.inr (by simp only [List.map_cons, List.mem_cons]; exact Or.inr h)
+
+theorem dictInsert_has {γ : Type} (k : String) (v : γ) :
+    ∀ acc : List (String × γ), k ∈ (dictInsert k v acc).map Prod.fst
+  | [] => by simp [dictInsert]
+  | (k', v') :: acc => by
+    simp only [dictInsert]
+    split
+    · simp
+    · simp only [List.map_cons, List.mem_cons]; exact Or.inr (dictInsert_has k v acc)
+
+theorem dictInsert_keeps {γ : Type} (k : String) (v : γ) {k' : String} :
+    ∀ acc : List (String × γ), k' ∈ acc.map Prod.fst → k' ∈ (dictInsert k v acc).map Prod.fst
+  | [], h => by simp at h
+  | (k'', v') :: acc, h => by
+    simp only [dictInsert]
+    simp only [List.map_cons, List.mem_cons] at h
+    split
+    · rename_i he
+      simp only [List.map_cons, List.mem_cons]
+      rcases h with h | h
+      · exact Or.inl (h.trans he)
+      · exact Or.inr h
+    · simp only [List.map_cons, List.mem_cons]
+      rcases h with h | h
+      · exact Or.inl h
+      · exact Or.inr (dictInsert_keeps k v acc h)
+
+theorem foldl_dictInsert_keys {γ : Type} {k : String} :
+    ∀ (l acc : List (String × γ)), (k ∈ acc.map Prod.fst ∨ k ∈ l.map Prod.fst) →
+      k ∈ (l.foldl (fun acc kv => dictInsert kv.1 kv.2 acc) acc).map Prod.fst
+  | [], acc, h => by simpa using h
+  | kv :: l, acc, h => by
+    apply foldl_dictInsert_keys l
+    simp only [List.map_cons, List.mem_cons] at h
+    rcases h with h | h | h
+    · exact Or.inl (dictInsert_keeps _ _ acc h)
+    · exact Or.inl (h ▸ dictInsert_has _ _ acc)
+    · exact Or.inr h
+
+/-- A Python `dict` built from pairs keeps every key. -/
+theorem mem_dedup_keys {γ : Type} {k : String} {l : List (String × γ)} (h : k ∈ l.map Prod.fst) :
+    k ∈ (dedup l).map Prod.fst :=
+  foldl_dictInsert_keys l [] (Or.inr h)
+
+/-- In a zip whose first list has no duplicates, the first component fixes
+the pair. -/
+theorem zip_fst_inj {γ δ : Type} : ∀ {as : List γ} {bs : List δ} {q q' : γ × δ}, as.Nodup →
+    q ∈ as.zip bs → q' ∈ as.zip bs → q.1 = q'.1 → q = q'
+  | [], _, _, _, _, h, _, _ => by simp at h
+  | _ :: _, [], _, _, _, h, _, _ => by simp at h
+  | a :: as, b :: bs, q, q', hn, hq, hq', he => by
+    rw [List.zip_cons_cons] at hq hq'
+    obtain ⟨ha, hn⟩ := List.nodup_cons.1 hn
+    rcases List.mem_cons.1 hq with rfl | hq <;> rcases List.mem_cons.1 hq' with rfl | hq'
+    · rfl
+    · have := (List.of_mem_zip hq').1
+      simp only at he; rw [← he] at this; exact absurd this ha
+    · have := (List.of_mem_zip hq).1
+      simp only at he; rw [he] at this; exact absurd this ha
+    · exact zip_fst_inj hn hq hq' he
+
+/-- **A field counts as set exactly when its name is in `fieldsSet`**
+(pydantic's `model_fields_set`). -/
+theorem mem_fieldsSet_iff {F : Fields β} (hl : F.Lawful) (extra : Extra) (src : Option Json) (mode : InputMode)
+    {q : String × String} (hq : q ∈ F.names.zip F.keys) :
+    q.1 ∈ F.fieldsSet extra src mode ↔ q ∈ F.setFields src (F.extraKeys extra src mode) := by
+  constructor
+  · intro h
+    simp only [fieldsSet, List.mem_append, List.mem_filter] at h
+    rcases h with h | ⟨h, -⟩
+    · obtain ⟨q', hq', he⟩ := List.mem_map.1 h
+      rw [zip_fst_inj hl.names_nodup hq (hl.setFields_sub _ _ q' hq') he.symm]
+      exact hq'
+    · exact hl.names_set _ _ q hq h
+  · intro h
+    exact List.mem_append_left _ (List.mem_map_of_mem h)
 
 /-- An extra a dump writes is one of the input's extras' keys. -/
 theorem extraDump_key (F : Fields β) (o : DumpOpts) :

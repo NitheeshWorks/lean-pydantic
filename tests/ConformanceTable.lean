@@ -1866,6 +1866,52 @@ def validationTable4 : List (String × String × String × Bool × String × Str
 def validationTable : List (String × String × String × Bool × String × String) :=
   validationTable0 ++ validationTable1 ++ validationTable2 ++ validationTable3 ++ validationTable4
 
+/-- (type tag, mode, input, sorted `model_fields_set` of the validated model) -/
+def fieldsSetTable : List (String × String × String × String) := [
+  ("shop", "python", "{\"name\":\"x\",\"images\":[],\"itemId\":3,\"sizes\":[1]}", "[\"images\",\"item_id\",\"name\",\"sizes\"]"),
+  ("shop", "json", "{\"name\":\"x\",\"images\":[],\"itemId\":3,\"sizes\":[1]}", "[\"images\",\"item_id\",\"name\",\"sizes\"]"),
+  ("shop", "json", "{\"name\":\"x\",\"images\":[{\"url\":\"u\",\"name\":\"n\"}],\"itemId\":\"7\",\"sizes\":[1,2],\"image\":{\"url\":\"a\",\"name\":\"b\"},\"stock\":{\"a\":1}}", "[\"image\",\"images\",\"item_id\",\"name\",\"sizes\",\"stock\"]"),
+  ("extra_forbid", "python", "{\"a\":1,\"B\":\"q\"}", "[\"a\",\"b\"]"),
+  ("extra_forbid", "json", "{\"a\":1,\"B\":\"q\"}", "[\"a\",\"b\"]"),
+  ("extra_allow", "python", "{\"a\":1}", "[\"a\"]"),
+  ("extra_allow", "json", "{\"a\":1}", "[\"a\"]"),
+  ("extra_allow", "python", "{\"z\":1,\"a\":1,\"b\":\"q\",\"y\":[1]}", "[\"a\",\"b\",\"y\",\"z\"]"),
+  ("extra_allow", "json", "{\"z\":1,\"a\":1,\"b\":\"q\",\"y\":[1]}", "[\"a\",\"y\",\"z\"]"),
+  ("extra_allow", "json", "{\"a\":1,\"B\":\"v\",\"c\":{\"d\":null}}", "[\"a\",\"b\",\"c\"]"),
+  ("extra_allow", "python", "{\"B\":\"v\",\"a\":2,\"z\":[]}", "[\"a\",\"b\",\"z\"]"),
+  ("extra_allow", "json", "{\"B\":\"v\",\"a\":2,\"z\":[]}", "[\"a\",\"b\",\"z\"]"),
+  ("extra_pop", "python", "{\"a\":1,\"b\":\"q\"}", "[\"a\",\"b\"]"),
+  ("extra_pop", "json", "{\"a\":1,\"b\":\"q\"}", "[\"a\",\"b\"]"),
+  ("extra_pop", "python", "{\"a\":1,\"B\":\"q\"}", "[\"a\",\"b\"]"),
+  ("extra_pop", "json", "{\"a\":1,\"B\":\"q\"}", "[\"a\",\"b\"]"),
+  ("extra_pop", "json", "{\"a\":1,\"b\":\"q\",\"B\":\"r\"}", "[\"a\",\"b\"]"),
+  ("extra_alias_allow", "python", "{\"alias_a\":\"a\",\"c\":\"c\"}", "[\"a\",\"c\"]"),
+  ("extra_alias_allow", "json", "{\"alias_a\":\"a\",\"c\":\"c\"}", "[\"a\",\"c\"]"),
+  ("extra_alias_allow", "python", "{\"extra_key\":\"extra\"}", "[\"extra_key\"]"),
+  ("extra_alias_allow", "json", "{\"extra_key\":\"extra\"}", "[\"extra_key\"]"),
+  ("extra_alias_allow", "python", "{\"a\":\"x\",\"alias_b\":\"y\"}", "[\"a\",\"b\"]"),
+  ("extra_alias_allow", "json", "{\"a\":\"x\",\"alias_b\":\"y\"}", "[\"b\"]"),
+  ("form_data", "python", "{\"username\":\"Foo\",\"password\":\"secret\"}", "[\"password\",\"username\"]"),
+  ("form_data", "json", "{\"username\":\"Foo\",\"password\":\"secret\"}", "[\"password\",\"username\"]"),
+  ("extra_allow", "python", "{\"a\":1,\"b\":\"v\"}", "[\"a\",\"b\"]"),
+  ("extra_allow", "json", "{\"a\":1,\"b\":\"v\"}", "[\"a\"]"),
+  ("extra_allow", "python", "{\"a\":1,\"B\":\"w\",\"b\":\"v\"}", "[\"a\",\"b\"]"),
+  ("extra_allow", "json", "{\"a\":1,\"B\":\"w\",\"b\":\"v\"}", "[\"a\",\"b\"]"),
+  ("extra_allow", "python", "{\"a\":1,\"B\":\"w\"}", "[\"a\",\"b\"]"),
+  ("extra_allow", "json", "{\"a\":1,\"B\":\"w\"}", "[\"a\",\"b\"]"),
+  ("extra_allow", "python", "{\"b\":\"v\",\"a\":2,\"q\":1}", "[\"a\",\"b\",\"q\"]"),
+  ("extra_allow", "json", "{\"b\":\"v\",\"a\":2,\"q\":1}", "[\"a\",\"q\"]"),
+  ("extra_pop", "python", "{\"a\":1,\"b\":\"v\"}", "[\"a\",\"b\"]"),
+  ("extra_pop", "json", "{\"a\":1,\"b\":\"v\"}", "[\"a\",\"b\"]"),
+  ("extra_pop", "python", "{\"a\":1,\"B\":\"w\"}", "[\"a\",\"b\"]"),
+  ("extra_pop", "json", "{\"a\":1,\"B\":\"w\"}", "[\"a\",\"b\"]"),
+  ("extra_pop", "json", "{\"a\":1,\"B\":\"w\",\"b\":\"v\"}", "[\"a\",\"b\"]"),
+  ("extra_alias_allow", "python", "{\"alias_a\":\"x\",\"b\":\"y\"}", "[\"a\",\"b\"]"),
+  ("extra_alias_allow", "json", "{\"alias_a\":\"x\",\"b\":\"y\"}", "[\"a\"]"),
+  ("extra_alias_allow", "python", "{}", "[]"),
+  ("extra_alias_allow", "json", "{}", "[]")
+]
+
 /-- (upstream test, type tag, input, (by_alias, exclude_unset, exclude_none, exclude_defaults), pydantic dump) -/
 def dumpTable : List (String × String × String × (Bool × Bool × Bool × Bool) × String) := [
   ("pydantic/tests/test_main.py::test_exclude_unset_dict", "shop", "{\"name\":\"x\",\"images\":[],\"itemId\":3,\"sizes\":[1]}", (false, false, false, false), "{\"name\":\"x\",\"tags\":[],\"image\":null,\"images\":[],\"item_id\":3,\"sizes\":[1],\"stock\":{}}"),

@@ -70,10 +70,23 @@ structure Fields.Lawful {β : Type} (F : Fields β) : Prop where
   its name under `populate_by_name`, its name). -/
   loc_key : ∀ (cfg : Cfg) (j : Json) (kvs : List (String × Json)) (es : List ErrorDetails),
     F.decode cfg j kvs = .error es → ∀ e ∈ es, ∃ k, (k ∈ F.keys ∨ k ∈ F.names) ∧ ∃ l, e.loc = .key k :: l
-  /-- `exclude_unset`: a dump by alias writes only fields counted as set
-  (`setKeys`, pydantic's `model_fields_set`). -/
-  unset_subset : ∀ (o : DumpOpts) (b : β), o.exclude_unset = true → o.by_alias = true →
-    ∀ p ∈ F.encode o b, p.1 ∈ F.setKeys o.set_from o.set_names
+  /-- `exclude_unset`: a dump writes only fields counted as set
+  (`setFields`, whose names are pydantic's `model_fields_set`), each under
+  its name or, by alias, its key. -/
+  unset_subset : ∀ (o : DumpOpts) (b : β), o.exclude_unset = true →
+    ∀ p ∈ F.encode o b, ∃ q ∈ F.setFields o.set_from o.set_names, p.1 = Fields.dumpKey o.by_alias q
+  /-- The fields' names are distinct. -/
+  names_nodup : F.names.Nodup
+  /-- The fields counted as set are fields, as (name, key). -/
+  setFields_sub : ∀ sf ns, ∀ q ∈ F.setFields sf ns, q ∈ F.names.zip F.keys
+  /-- A field named like an extra counts as set (pydantic's
+  `model_fields_set` holds the extras' keys). -/
+  names_set : ∀ sf ns, ∀ q ∈ F.names.zip F.keys, q.1 ∈ ns → q ∈ F.setFields sf ns
+  /-- And it writes every field counted as set, when no other option leaves
+  one out. -/
+  unset_complete : ∀ (o : DumpOpts) (b : β), o.exclude_unset = true → o.«include» = none → o.exclude = [] →
+    o.exclude_none = false → o.exclude_defaults = false →
+    ∀ q ∈ F.setFields o.set_from o.set_names, ∃ p ∈ F.encode o b, p.1 = Fields.dumpKey o.by_alias q
 
 /-- Every field is read by its key alone (no `populate_by_name`). -/
 def Fields.ByKey {β : Type} (F : Fields β) : Prop := F.lookups = F.keys.map ([·])

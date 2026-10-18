@@ -52,10 +52,10 @@ structure Fields (β : Type) where
   names : List String
   props : List (String × Schema)
   required : List String
-  /-- The keys of the fields counted as set (pydantic's `model_fields_set`),
-  given the input the value was validated from and that input's extras'
-  keys. -/
-  setKeys : Option Json → List String → List String
+  /-- The fields counted as set, as (name, key), given the input the value
+  was validated from and that input's extras' keys. Their names are
+  pydantic's `model_fields_set`. -/
+  setFields : Option Json → List String → List (String × String)
 
 namespace Fields
 
@@ -68,7 +68,7 @@ def nil : Fields Unit where
   names := []
   props := []
   required := []
-  setKeys _ _ := []
+  setFields _ _ := []
 
 /-- The validator of one field: its member's value, else its default, else
 `missing` (whose input is the whole object `j`). Errors are placed under the
@@ -159,8 +159,8 @@ def field {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] (name : Strin
       (if (JsonSchema.schema α).wantsTitle then some (fieldTitle key) else none)
       (if factory then none else default.map (toJson { serializers := false }))) :: rest.props
     required := if default.isSome then rest.required else key :: rest.required
-    setKeys := fun sf ns =>
-      (if isSet sf ns (if byName then [key, name] else [key]) name then [key] else []) ++ rest.setKeys sf ns }
+    setFields := fun sf ns =>
+      (if isSet sf ns (if byName then [key, name] else [key]) name then [(name, key)] else []) ++ rest.setFields sf ns }
 
 variable {α β : Type}
 
@@ -238,10 +238,15 @@ def extraKeys (extra : Extra) (F : Fields β) (set_from : Option Json) (mode : I
     | _ => []
   else []
 
-/-- pydantic's `model_fields_set`, by key: the fields counted as set, then
-(under `allow`) the extras' keys. -/
+/-- pydantic's `model_fields_set`: the names of the fields counted as set,
+then (under `allow`) the extras' keys, each once. -/
 def fieldsSet (extra : Extra) (F : Fields β) (set_from : Option Json) (mode : InputMode) : List String :=
-  F.setKeys set_from (F.extraKeys extra set_from mode) ++ F.extraKeys extra set_from mode
+  let ex := F.extraKeys extra set_from mode
+  let ns := (F.setFields set_from ex).map Prod.fst
+  ns ++ ex.filter (fun k => !ns.contains k)
+
+/-- The key a field (name, key) is dumped under. -/
+def dumpKey (by_alias : Bool) (q : String × String) : String := if by_alias then q.2 else q.1
 
 /-- The model serialiser: the fields, then (under `allow`) the extras. An
 extra named like a field marks that field as set. -/

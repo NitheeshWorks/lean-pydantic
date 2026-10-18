@@ -196,7 +196,7 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
     if byName then byNameAny := true
     let byNameStx ← if byName then `(true) else `(false)
     fieldsStx ← `(LeanPydantic.Fields.field $nameLit $aliasStx $dflt $fieldsStx $factoryStx $byNameStx)
-    lawStx ← `(LeanPydantic.Fields.field_lawful (by decide) $lawStx)
+    lawStx ← `(LeanPydantic.Fields.field_lawful (by decide) (by decide) $lawStx)
     soundStx ← `(LeanPydantic.Fields.field_sound $soundStx)
   -- into: the tuple of fields; back: the constructor applied to its parts
   let x := mkIdent `x
