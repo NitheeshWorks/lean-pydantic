@@ -410,7 +410,7 @@ source that compiles to `r` accepts a string exactly when `r` matches some
 segment of it. -/
 theorem ofSource_test {src : String} {r : Regex} (h : compile src = .ok r) (s : String) :
     (ofSource src).test s = true ↔ r.Search s.toList := by
-  simp only [ofSource, h]
+  simp only [ofSource, h, Regex.searchDfa_eq]
   exact Regex.search_correct r s
 
 /-- A compiled pattern's source is the one given (it is the schema's

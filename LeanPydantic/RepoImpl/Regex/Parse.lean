@@ -1,5 +1,5 @@
 import Keel
-import LeanPydantic.RepoImpl.Regex.Match
+import LeanPydantic.RepoImpl.Regex.Dfa
 
 /-!
 # RepoImpl: compiling a pattern
@@ -369,7 +369,7 @@ def compile (src : String) : Except String Regex :=
 compiles, so the fallback is never taken there. -/
 def ofSource (src : String) : Keel.Pattern :=
   match compile src with
-  | .ok r => ⟨src, r.search⟩
+  | .ok r => ⟨src, r.searchDfa⟩
   | .error _ => ⟨src, fun _ => false⟩
 
 end LeanPydantic.Regex

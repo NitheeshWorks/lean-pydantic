@@ -135,7 +135,14 @@ checks they use only Lean's three axioms).
 * **`pattern` is a verified, linear-time matcher.** Partial derivatives finish
   exactly the matches (`derive_correct`), the scan decides Rust's unanchored
   `is_match` (`search_correct`), and its state is bounded by the pattern's size
-  (`reach_length_le`): no input can make it backtrack.
+  (`reach_length_le`): no input can make it backtrack. Patterns run it as a
+  lazily built DFA, one cached transition per character, proved to be the
+  scan (`searchDfa_eq`), with a bounded table.
+* **Hostile sizes are linear.** Dict keys collapse through a hash index
+  (`dedupIdx_eq`), an int string longer than 4300 digits is rejected before
+  conversion, and decimal bounds never build `10 ^ exponent`
+  (`Dec.ltCore_iff`, `Dec.dvdCore_iff`). `lake exe bench` times each case
+  against a bound (`tests/Bench.lean`).
 
 These come from a few general facts: the field combinator is lawful
 (`Fields.field_lawful`), and the deriving handler builds each model's proof

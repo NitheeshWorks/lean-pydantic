@@ -35,3 +35,19 @@ import json
 for name, ta, s in cases[:3]:
     v = json.loads(s)
     print(f'{name} (validate_python): {best(ta.validate_python, v):.1f} ms')
+
+# patterns (Lean: Regex.searchDfa on the same text)
+from typing import Annotated
+from pydantic import Field
+wide = '(a|b)' * 50 + 'c'
+for name, pat, text in [('^(a{1,50})+$, 10 000', r'^(a{1,50})+$', 'a' * 10000),
+                        ('^(a{1,50})+$, 20 000', r'^(a{1,50})+$', 'a' * 20000),
+                        ('(a|b)x50 c, 50 000', wide, 'ab' * 25000),
+                        ('(a|b)x50 c, 100 000', wide, 'ab' * 50000)]:
+    ta = TypeAdapter(Annotated[str, Field(pattern=pat)])
+    def run(t, ta=ta):
+        try:
+            ta.validate_python(t)
+        except Exception:
+            pass
+    print(f'pattern {name}: {best(run, text):.2f} ms')

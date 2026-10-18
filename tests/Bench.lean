@@ -21,11 +21,19 @@ The bounds are set against pydantic-core 2.14.1 on the same machine
 | dict, 100 000 keys, parsed | 10.7 ms | 38 ms | 75 ms |
 | dict, 200 000 keys, parsed | 27.4 ms | 83-97 ms | 180 ms |
 | set, 200 000 items, parsed | 6.2 ms | 22-24 ms | 50 ms |
+| `^(a{1,50})+$`, 10 000 / 20 000 characters | 0.03 / 0.06 ms | 94 / 94 ms | 300 ms |
+| `(a\|b)` ×50 then `c`, 50 000 / 100 000 characters | 0.15 / 0.33 ms | 24 / 27 ms | 100 ms |
 
 Of `validate_json`'s time on the dict, 50 ms of 78 is lean-json's parser.
 The parsed rows give pydantic-core a built Python `dict`, so it does no
 key collapsing, while here the members arrive as a list and are collapsed
 with a hash index.
+
+The pattern rows run the lazy DFA (`Regex.searchDfa`): doubling the text
+leaves the time flat, as every character after the first few is one cached
+transition. What remains is building the states, about 1 ms each for the
+counted repetition's hundred states of large terms (each is hashed and
+compared whole); Rust's `regex` compiles the pattern up front.
 
 Run with `lake exe bench`.
 -/
@@ -82,7 +90,16 @@ def benches : List Bench :=
   let tpd := TypeAdapter.new (PyDecimal ∣ gt 0)
   let digits (n : Nat) : String := String.ofList (List.replicate n '7')
   let rejects {α} (r : Except ValidationError α) : Bool := match r with | .ok _ => false | .error _ => true
-  [⟨"int, 65000-digit JSON number (validate_json)", 50, digits 65000, fun s => rejects (ti.validate_json s)⟩,
+  let rx (src : String) : Regex.Regex := match Regex.compile src with | .ok r => r | .error _ => .empty
+  let counted := rx "^(a{1,50})+$"
+  let wide := rx (String.join (List.replicate 50 "(a|b)") ++ "c")
+  let as (n : Nat) : String := String.ofList (List.replicate n 'a')
+  let abs (n : Nat) : String := String.join (List.replicate (n / 2) "ab")
+  [⟨"pattern ^(a{1,50})+$ on 10 000 characters", 300, as 10000, fun s => counted.searchDfa s⟩,
+    ⟨"pattern ^(a{1,50})+$ on 20 000 characters", 300, as 20000, fun s => counted.searchDfa s⟩,
+    ⟨"pattern (a|b) x50 then c on 50 000 characters", 100, abs 50000, fun s => !wide.searchDfa s⟩,
+    ⟨"pattern (a|b) x50 then c on 100 000 characters", 100, abs 100000, fun s => !wide.searchDfa s⟩,
+    ⟨"int, 65000-digit JSON number (validate_json)", 50, digits 65000, fun s => rejects (ti.validate_json s)⟩,
     ⟨"int, 65000-digit string, lax (validate_json)", 50, "\"" ++ digits 65000 ++ "\"", fun s => rejects (ti.validate_json s)⟩,
     ⟨"int, 1 MiB digit string, lax (validate_python)", 100, digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,
     ⟨"int, 4300-digit string, lax (validate_python)", 50, digits 4300, fun s =>
