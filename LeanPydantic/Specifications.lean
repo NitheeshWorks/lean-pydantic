@@ -1,1 +1,1 @@
-import LeanPydantic.Specifications.Basic
+import LeanPydantic.Specifications.Laws
