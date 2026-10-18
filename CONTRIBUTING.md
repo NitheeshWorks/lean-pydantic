@@ -99,9 +99,7 @@ Listed here with the reason, and in `docs/traceability.toml` with
 * Matched on purpose although upstream is wrong: UP-032 (`'0-5'` is `-5`),
   UP-033 (`int_parsing_size` message on floats), UP-034 (`NaN` in
   `ValidationError.json()`).
-* With `open LeanPydantic`, `a ∣ b` for an identifier `b` reads as a
-  refinement, not divisibility (the notation outranks core's `∣` so that
-  `Nat ∣ le 100` never becomes a divisibility claim).
+
 
 ## Tests
 
