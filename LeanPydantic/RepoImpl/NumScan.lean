@@ -626,7 +626,8 @@ theorem afterSign_head {neg : Bool} {r : List Char} {p : Parts} (h : afterSign n
 /-! ## Truncation, for a correctly rounded double
 
 A binary64 rounding boundary (a midpoint between adjacent doubles, or the
-edge of the range) has at most 767 significant decimal digits. So keeping
+edge of the range) has at most 768 significant decimal digits (a double has
+at most 767, the midpoint after it one more). So keeping
 the first 769 or more significant digits and a sticky digit for whatever
 nonzero digits follow leaves the value between the same two boundaries:
 `DigAcc.trunc` keeps 49 chunks from the first nonzero one (at least

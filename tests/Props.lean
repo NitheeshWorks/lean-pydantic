@@ -97,15 +97,25 @@ def decimalText (n p : Nat) : String :=
     let ds := String.ofList (List.replicate (p + 1 - min ds.length (p + 1)) '0') ++ ds
     (ds.take (ds.length - p)).toString ++ "." ++ (ds.drop (ds.length - p)).toString
 
-/-- A halfway case and its neighbours: the midpoint between a random finite
-positive double and the next one up, exactly, as `A / 10 ^ p`; then
+/-- A halfway case and its neighbours: the midpoint between a finite
+positive double (drawn mostly where midpoints are longest) and the next one up, exactly, as `A / 10 ^ p`; then
 `A * 10 ^ K` and that plus and minus one, at `p + K` places, so the text runs
 past the 769 kept digits and the tie is broken (or not) far beyond them. -/
 def Rng.halfway (r : Rng) : List String × Rng :=
   let (v, r) := r.next
-  let bits := v &&& 0x7FEFFFFFFFFFFFFF
-  let be := ((bits >>> 52) &&& 0x7FF).toNat
-  let frac := (bits &&& 0xFFFFFFFFFFFFF).toNat
+  -- biased to where midpoints have the most digits (subnormals and the
+  -- smallest normal binade, up to 768 significant digits) and to the top of
+  -- the range; a quarter of the draws are any finite double
+  let (cls, r) := r.nat 8
+  let (top, r) := r.nat 3
+  let frac0 := (v &&& 0xFFFFFFFFFFFFF).toNat
+  let frac := if cls < 4 && top = 0 then 0xFFFFFFFFFFFFF - frac0 % 16 else frac0
+  let be : Nat := match cls with
+    | 0 | 1 => 0
+    | 2 | 3 => 1
+    | 4 => 2
+    | 5 => 2046
+    | _ => ((v >>> 52) &&& 0x7FF).toNat % 2047
   let (m, e) : Nat × Int := if be = 0 then (frac, -1074) else (frac + 2 ^ 52, (be : Int) - 1075)
   -- midpoint (2m + 1) * 2 ^ (e - 1)
   let f := e - 1

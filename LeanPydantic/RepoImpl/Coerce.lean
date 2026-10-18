@@ -767,8 +767,9 @@ digits and a sticky digit are converted, so a long string costs one pass;
 anything else goes through `strAsNumberChars`. Equal to
 `(strAsNumber s).map Number.toFloat` when nothing is cut
 (`strAsDouble_exact`); with a cut, the double is the same because no binary64
-rounding boundary has more than 767 significant digits (tested in
-`tests/Props.lean` on constructed halfway cases). -/
+rounding boundary has more than 768 significant digits (tested in
+`tests/Props.lean` on constructed halfway cases, pinned in
+`tests/Conformance.lean` on a 768-digit tie). -/
 def strAsDouble (s : String) : Except ErrorKind Float :=
   let st := s.foldl NumScan.St.step {}
   if st.accepts then .ok (Number.toFloat (.float (floatDecimal st)))

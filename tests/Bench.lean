@@ -34,7 +34,8 @@ The bounds are set against pydantic-core 2.14.1 on the same machine
 `String.foldl` into 16-digit chunks, about 13 ms per MiB).
 `float` then converts only the leading 769 or more significant digits and a
 sticky digit (`DigAcc.trunc`): no binary64 rounding boundary has more than
-767 significant digits, so the double is the exact text's (tested on
+768 significant digits (a double has at most 767; a midpoint between two
+subnormals one more), so the double is the exact text's (tested on
 constructed halfway cases in `tests/Props.lean`, pinned against pydantic in
 `tests/Conformance.lean`). It is linear, at the scan's cost: about 60x
 pydantic-core, whose reader is a vectorised byte scan. `Decimal` keeps
