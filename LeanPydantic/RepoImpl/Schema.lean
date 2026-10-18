@@ -21,6 +21,16 @@ namespace LeanPydantic
 open LeanJson (Json Number Decimal)
 open LeanJson.Json (isNull)
 
+/-- Insert with Python `dict` semantics: an existing key keeps its position
+and takes the new value; a new key goes at the end. -/
+def dictInsert {β : Type} (k : String) (v : β) : List (String × β) → List (String × β)
+  | [] => [(k, v)]
+  | (k', v') :: kvs => if k' = k then (k, v) :: kvs else (k', v') :: dictInsert k v kvs
+
+/-- The entries a Python `dict` built from these pairs holds. -/
+def dedup {β : Type} (kvs : List (String × β)) : List (String × β) :=
+  kvs.foldl (fun acc kv => dictInsert kv.1 kv.2 acc) []
+
 namespace Keyword
 
 /-- The keyword's name and value. -/
@@ -220,7 +230,7 @@ def check : Schema → Json → Bool
     | _ => false
   | .dict v, j =>
     match j with
-    | .obj ⟨kvs⟩ => checkValues v (LeanJson.Json.dedupKeysList kvs)
+    | .obj ⟨kvs⟩ => checkValues v (dedup kvs)
     | _ => false
   | .literal vs, j => decide (j ∈ vs)
   | .anyOf alts, j => checkAny alts j

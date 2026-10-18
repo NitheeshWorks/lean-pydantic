@@ -35,6 +35,21 @@ structure Offer where
   ok : Bool := true
   deriving Model
 
+structure Image where
+  url : String
+  name : String
+  deriving Model
+
+structure Shop where
+  name : String
+  tags : List String := []
+  image : Option Image := none
+  images : List Image
+  item_id : Alias "itemId" Int
+  sizes : List Int ∣ minLength 1 ∧ maxLength 2
+  stock : Dict Int := {}
+  deriving Model
+
 /-- Validate `input` as pydantic's `TypeAdapter(T)` would, and print what
 pydantic prints. -/
 def runAs (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (mode : String)
@@ -71,6 +86,33 @@ def dispatch (tag : String) : Option ((String → Bool → String → String) ×
   | "nat_le10" => r (Nat ∣ le 10)
   | "item" => r Item
   | "offer" => r Offer
+  | "list_int" => r (List Int)
+  | "list_str_1_2" => r (List String ∣ minLength 1 ∧ maxLength 2)
+  | "dict_int" => r (Dict Int)
+  | "opt_list_int" => r (Option (List Int))
+  | "list_item" => r (List Item)
+  | "image" => r Image
+  | "shop" => r Shop
+  | _ => none
+
+/-- Validate `input`, then `model_dump_json` it with the given options and
+`set_from := input`, as pydantic dumps the instance it validated. -/
+def dumpAs (α : Type) [FromJson α] [ToJson α] (input : String) (o : Bool × Bool × Bool × Bool) : String :=
+  let (ba, eu, en, ed) := o
+  match LeanJson.from_json input with
+  | .error _ => "<input is not JSON>"
+  | .ok j =>
+    match validateWith α {} j.val with
+    | .error e => e.json
+    | .ok a =>
+      let o : DumpOpts :=
+        { by_alias := ba, exclude_unset := eu, exclude_none := en, exclude_defaults := ed, set_from := some j.val }
+      LeanJson.printStr (toJson o a.val)
+
+def dispatchDump (tag : String) : Option (String → Bool × Bool × Bool × Bool → String) :=
+  match tag with
+  | "shop" => some (dumpAs Shop)
+  | "offer" => some (dumpAs Offer)
   | _ => none
 
 structure Case where
@@ -131,7 +173,15 @@ def handCases : List Case := [
         <&&> pure (e.error_count == 1 && e.title == "Offer") }
 ]
 
-def cases : List Case := tableCases ++ schemaCases ++ handCases
+def dumpCases : List Case :=
+  dumpTable.map fun (up, tag, input, o, expected) =>
+    { upstream := up
+      name := s!"dump {tag} {o} {input.take 40}"
+      run := match dispatchDump tag with
+        | none => pure false
+        | some f => check expected (f input o) }
+
+def cases : List Case := tableCases ++ schemaCases ++ dumpCases ++ handCases
 
 def main (args : List String) : IO UInt32 := do
   let verbose := args.contains "-v"

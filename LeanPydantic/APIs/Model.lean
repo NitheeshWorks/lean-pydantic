@@ -1,4 +1,4 @@
-import LeanPydantic.Proofs.Fields
+import LeanPydantic.Proofs.Containers
 
 /-!
 # APIs: models, `TypeAdapter`, and pydantic's method names

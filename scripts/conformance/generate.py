@@ -30,6 +30,19 @@ class Offer(BaseModel):
     item_id: int
     ok: bool = True
 
+class Image(BaseModel):
+    url: str
+    name: str
+
+class Shop(BaseModel):
+    name: str
+    tags: list[str] = []
+    image: Optional[Image] = None
+    images: list[Image]
+    item_id: int = Field(alias='itemId')
+    sizes: Annotated[list[int], Field(min_length=1, max_length=2)]
+    stock: dict[str, int] = {}
+
 TYPES = {
     'int': int,
     'nat': NonNegativeInt,
@@ -46,6 +59,13 @@ TYPES = {
     'nat_le10': Annotated[NonNegativeInt, Field(le=10)],
     'item': Item,
     'offer': Offer,
+    'list_int': list[int],
+    'list_str_1_2': Annotated[list[str], Field(min_length=1, max_length=2)],
+    'dict_int': dict[str, int],
+    'opt_list_int': Optional[list[int]],
+    'list_item': list[Item],
+    'image': Image,
+    'shop': Shop,
 }
 
 PC = 'pydantic-core/tests/validators/'
@@ -83,6 +103,19 @@ OFFER_IN = ['{"price": 0, "discount": 101, "q": "ab", "item_id": "x1", "ok": "ma
     '{"price": 1, "item_id": 1, "q": "abcd", "ok": "yes"}', '{"price": 1, "item_id": 1, "q": null}',
     '7', '{"price": "inf", "item_id": 1}']
 
+LIST_IN = ['[]', '[1, 2, 3]', '["1", " 2 "]', '[1, "x", 2.5, null]', '"ab"', '{}', 'null', '5', '[[1]]', '[true]']
+LIST_STR_IN = ['[]', '["a"]', '["a", "b"]', '["a", "b", "c"]', '[1]', '"a"']
+DICT_IN = ['{}', '{"a": 1, "b": "2"}', '{"a": "x", "b": 1.5, "c": 3}', '[]', '"x"', 'null', '{"a": 1, "a": 2}']
+OPT_LIST_IN = ['null', '[1]', '["x"]', '1']
+LIST_ITEM_IN = ['[]', '[{"name": "a", "price": 1}]', '[{"name": "a"}, 5, {"price": "x"}]', '{}']
+IMAGE_IN = ['{"url": "u", "name": "n"}', '{"url": 1}', '[]']
+SHOP_IN = ['{"name":"x","images":[{"url":1},{"name":"a","url":"u"},5],"itemId":"z","sizes":[],"tags":"ab","image":[]}',
+    '{"name":"x","images":{},"item_id":3,"sizes":[1,2,3]}', '{"name":"x","images":[],"itemId":3,"sizes":["a",2.5]}',
+    '{"name":"x","images":[],"itemId":3,"sizes":[1]}',
+    '{"name":"x","images":[{"url":"u","name":"n"}],"itemId":"7","sizes":[1,2],"image":{"url":"a","name":"b"},"stock":{"a":1}}',
+    '{"name":"x","images":[],"itemId":3,"sizes":[1],"image":null,"stock":{"a":"x","b":[]}}',
+    '{"name":"x","images":[],"itemId":3,"sizes":[1],"tags":["t", 1, null]}']
+
 ROWS = [
     ('int', INT_IN, PC + 'test_int.py::test_int_py_and_json'),
     ('nat', NAT_IN, 'pydantic/tests/test_types.py::test_strict_raw_type'),
@@ -99,6 +132,13 @@ ROWS = [
     ('nat_le10', NAT_IN, 'pydantic/tests/test_types.py::test_constraints_arbitrary_type'),
     ('item', ITEM_IN, 'pydantic/tests/test_main.py::test_ultra_simple_failed'),
     ('offer', OFFER_IN, 'pydantic/tests/test_main.py::test_default_factory_field'),
+    ('list_int', LIST_IN, PC + 'test_list.py::test_list_py_or_json'),
+    ('list_str_1_2', LIST_STR_IN, PC + 'test_list.py::test_list_length_constraints'),
+    ('dict_int', DICT_IN, PC + 'test_dict.py::test_dict'),
+    ('opt_list_int', OPT_LIST_IN, PC + 'test_nullable.py::test_nullable'),
+    ('list_item', LIST_ITEM_IN, 'pydantic/tests/test_main.py::test_nested_model'),
+    ('image', IMAGE_IN, 'pydantic/tests/test_main.py::test_nested_model'),
+    ('shop', SHOP_IN, 'pydantic/tests/test_aliases.py::test_alias_error'),
 ]
 STRICT_ROWS = [
     ('int', ['1', '"1"', '1.0', 'true', 'null'], PC + 'test_int.py::test_int_strict'),
@@ -107,6 +147,7 @@ STRICT_ROWS = [
     ('str', ['"x"', '1'], PC + 'test_string.py::test_str'),
     ('item', ['{"name": "x", "price": 1}', '{"name": "x", "price": "1"}'], 'pydantic/tests/test_main.py::test_model_validate_strict'),
 ]
+PD_DUMP = 'pydantic/tests/test_main.py::test_exclude_unset_dict'
 JSON_ONLY = [('item', ['{"name": "x",', '{"name": "x", "price": 1} x', '', '[1,]'],
     'pydantic/tests/test_types.py::test_invalid_model_json'),
     ('int', ['"1', '01', '-'], 'pydantic/tests/test_types.py::test_invalid_simple_json')]
@@ -160,6 +201,24 @@ for tag, inputs, ref in JSON_ONLY:
     for text in inputs:
         rows.append((ref, tag, 'json', False, text, run(tag, 'json', False, text)))
 
+# model_dump_json(by_alias, exclude_unset, exclude_none, exclude_defaults) after validate_python
+DUMP_ROWS = [('shop', t, opts) for t in [
+    '{"name":"x","images":[],"itemId":3,"sizes":[1]}',
+    '{"name":"x","images":[{"url":"u","name":"n"}],"itemId":"7","sizes":[1,2],"image":{"url":"a","name":"b"},"stock":{"a":1}}',
+    '{"name":"x","images":[],"itemId":3,"sizes":[1],"image":null,"tags":[]}']
+  for opts in [(False, False, False, False), (True, False, False, False), (False, True, False, False),
+               (True, True, False, False), (False, False, True, False), (False, False, False, True)]] + \
+  [('offer', t, opts) for t in ['{"price": 2.5, "item_id": 3}', '{"price": 1, "item_id": 1, "q": "abcd", "discount": 0}']
+   for opts in [(False, True, False, False), (False, False, False, True)]]
+
+def run_dump(tag, text, opts):
+    ta = TypeAdapter(TYPES[tag])
+    v = ta.validate_python(json.loads(text))
+    ba, eu, en, ed = opts
+    return v.model_dump_json(by_alias=ba, exclude_unset=eu, exclude_none=en, exclude_defaults=ed)
+
+dumps = [(PD_DUMP, tag, text, opts, run_dump(tag, text, opts)) for tag, text, opts in DUMP_ROWS]
+
 schemas = [(tag, json.dumps(TypeAdapter(t).json_schema(), separators=(',', ':'), ensure_ascii=False))
            for tag, t in TYPES.items()]
 
@@ -170,6 +229,12 @@ print('/-- (upstream test, type tag, mode, strict, input, pydantic output) -/')
 print('def validationTable : List (String × String × String × Bool × String × String) := [')
 print(',\n'.join('  (%s, %s, %s, %s, %s, %s)' % (lean_str(r), lean_str(t), lean_str(m), 'true' if s else 'false',
       lean_str(i), lean_str(o)) for r, t, m, s, i, o in rows))
+print(']')
+print()
+print('/-- (upstream test, type tag, input, (by_alias, exclude_unset, exclude_none, exclude_defaults), pydantic dump) -/')
+print('def dumpTable : List (String × String × String × (Bool × Bool × Bool × Bool) × String) := [')
+print(',\n'.join('  (%s, %s, %s, (%s), %s)' % (lean_str(r), lean_str(t), lean_str(i), ', '.join('true' if b else 'false' for b in o), lean_str(out))
+      for r, t, i, o, out in dumps))
 print(']')
 print()
 print('/-- (type tag, `TypeAdapter(T).json_schema()`, compact) -/')
