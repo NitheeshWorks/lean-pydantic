@@ -28,7 +28,7 @@ theorem derive_correct (p : Option Char) (c : Char) (r : Regex) (u : List Char) 
 
 /-- The partial derivatives by `c` are a pick from the linear form of `r`. -/
 theorem pd_eq_lin (p : Option Char) (c : Char) (r : Regex) :
-    pd p c r = Keel.Regex.pick c (Keel.Regex.lin (Keel.Regex.ctx Cls p) (isWord c) r) :=
+    pd p c r = Keel.Regex.pick c (Keel.Regex.lin (Keel.Regex.ctx Cls p) (Keel.Regex.ctx Cls (some c)) r) :=
   Keel.Regex.pd_eq_lin p c r
 
 /-- `Search` is Keel's `Accepts` in `Mode.search`. -/
