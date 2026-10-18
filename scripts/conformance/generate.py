@@ -16,7 +16,7 @@ generated.
 import json, sys
 from enum import Enum
 from typing import Annotated, Literal, Optional, Union
-from pydantic import BaseModel, Field, FiniteFloat, NonNegativeInt, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, FiniteFloat, NonNegativeInt, TypeAdapter, ValidationError, constr
 
 class Item(BaseModel):
     name: str
@@ -302,3 +302,59 @@ print('/-- (type tag, `TypeAdapter(T).json_schema()`, compact) -/')
 print('def schemaTable : List (String × String) := [')
 print(',\n'.join('  (%s, %s)' % (lean_str(t), lean_str(s)) for t, s in schemas))
 print(']')
+
+# `pattern`: does constr(pattern=p) accept s (Rust regex, unanchored search), or is p a SchemaError
+REGEX_REF = 'pydantic/tests/test_types.py::test_pattern'
+REGEX_INPUTS = ['', 'a', 'abc', 'xxabcxx', 'ABC', 'abc\n', '\nabc', 'a b', 'foo bar', 'foo_bar', 'x-1',
+                '12345', '1234', '123456', '٣٤٥', 'é', 'Ünïcödé', '😀', 'a\tb', ' ', ' x', 'xxx123', 'xxx12',
+                'bob@example.com', 'not an email', '2024-01-31', '2024-1-31', 'A1', 'a1', '_1', 'aaaa', 'aa', 'a{2}',
+                '-', ']', '[', '^', '$', '.', '*', '\\', 'ab12CD', '550e8400-e29b-41d4-a716-446655440000', 'a.b', 'a+b']
+REGEX_PATTERNS = [
+    # from upstream tests
+    '^text$', 'abc', r'^\d{5}$', r'^\w\d$', r'^xxx\d{3}$', r'[A-Z0-9]+', r'[A-Za-z0-9]+',
+    # common field patterns
+    r'^[a-z0-9_-]{3,16}$', r'^[^@\s]+@[^@\s]+\.[a-z]{2,}$', r'^\d{4}-\d{2}-\d{2}$',
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', r'^(?:[a-z]+\.)*[a-z]+$', r'^\+?[0-9 ]+$',
+    # syntax and semantics
+    '^abc$', 'a|', '()', '(|a)', '(?:)', r'\d', r'\D', r'\w', r'\W', r'\s', r'\S', r'^\s*$', r'\bfoo\b', r'\Bo', r'\<b', r'a\>',
+    r'\Aa', r'c\z', '$a', '^*', r'\b*', 'a**', 'a{2}{3}', '^a{2,3}$', 'a{2,}', '^a{0}$', 'a{ 2}', 'a{2, 3}', 'x*?y', 'a+?', 'a??',
+    '[a-]', '[-a]', '[a-b-c]', '[^]a]', '[]a]', '[a^]', r'[\]]', r'[\[]', r'[\w]', r'[^\d\s]', '[a&&b]', '[a-z&&[^aeiou]]',
+    '[a--b]', '[a-c--b]', '[a~~b]', '[a&b]', '[[a][b]]', r'\x41', r'\x{1F600}', r'A', r'\u{41}', r'\U0001F600',
+    r'\#', r'\ ', r'\-', r'\_', r'\/', r'\.', r'\*', r'\\', r'\^', r'\$', r'\{', '.', '^.$', '[^a]', 'é', '(?P<n>a)', '(?<n>a)b',
+    '^(a+)+$', '(a|aa)*b', r'^(\w+\s?)*$', ']', '}', 'a|b|c', '(a|b)(c|d)', '((a))', r'^\p{L}$', r'\v', r'\f', r'\a', r'\t',
+    # rejected by pydantic
+    'a{', 'a{2', '{', 'x{a}', '[[]', '[]', '[^]', '(?=a)', 'a{,3}', r'\Z', '*a', '\\', r'\h', r'\0', r'\e', r'[\d-z]', '[z-a]',
+    r'[\b]', '[a-\\x{10}]', 'a{2,1}', 'a{4294967296}', '(?P<1a>x)', '(?<a>x)(?<a>y)', '(a', 'a)', 'x|*', r'\Q', r'\N',
+    r'\b{start}a', '(?i)ab', '(?s).', r'\p{L}', '[[:alpha:]]',
+]
+
+def regex_result(p, s):
+    try:
+        ta = TypeAdapter(constr(pattern=p))
+    except Exception:
+        return 'error'
+    try:
+        ta.validate_python(s)
+        return 'true'
+    except ValidationError:
+        return 'false'
+
+regex_rows = []
+for p in REGEX_PATTERNS:
+    for s in REGEX_INPUTS:
+        res = regex_result(p, s)
+        regex_rows.append((p, s, res))
+        if res == 'error':
+            break
+
+print()
+CHUNK = 400
+chunks = [regex_rows[i:i + CHUNK] for i in range(0, len(regex_rows), CHUNK)]
+for k, rows_k in enumerate(chunks):
+    print('def regexTable%d : List (String × String × String) := [' % k)
+    print(',\n'.join('  (%s, %s, %s)' % (lean_str(p), lean_str(s), lean_str(r)) for p, s, r in rows_k))
+    print(']')
+    print()
+print('/-- (pattern, input, whether `constr(pattern=…)` accepts it: "true", "false", or "error" for a SchemaError) -/')
+print('def regexTable : List (String × String × String) :=')
+print('  ' + ' ++ '.join('regexTable%d' % k for k in range(len(chunks))))

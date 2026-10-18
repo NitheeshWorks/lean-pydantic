@@ -1,5 +1,6 @@
 import LeanPydantic.APIs.Model
 import LeanPydantic.Proofs.Error
+import LeanPydantic.Proofs.Regex
 
 /-!
 # The harness: one `Verified<Layer>` structure per layer
@@ -75,6 +76,22 @@ structure VerifiedModel : Prop where
   locPrefix : ∀ (α : Type) [m : Model α] [LawfulModel α] (cfg : Cfg) (kvs : List (String × Json)) es,
     fromJson (α := α) cfg (.obj ⟨kvs⟩) = .error es → ∀ e ∈ es, ∃ k ∈ m.fields.keys, ∃ l, e.loc = .key k :: l
 
+/-- `pattern`: the matcher, its correctness and its bound. -/
+structure VerifiedRegex : Prop where
+  /-- `derive_correct`: partial derivatives finish exactly the matches that
+  start with the character read. -/
+  deriveCorrect : ∀ (r : Regex.Regex) (p : Option Char) (c : Char) (u : List Char) (n : Option Char),
+    r.Matches p (c :: u) n ↔ ∃ q ∈ Regex.Regex.pd p c r, q.Matches (some c) u n
+  /-- The scan decides the unanchored search (Rust's `is_match`). -/
+  searchCorrect : ∀ (r : Regex.Regex) (s : String), r.search s = true ↔ r.Search s.toList
+  /-- A compiled pattern tests exactly that search. -/
+  patternTest : ∀ (src : String) (r : Regex.Regex), Regex.compile src = .ok r →
+    ∀ s, (Regex.ofSource src).test s = true ↔ r.Search s.toList
+  /-- Linear time: every state the scan reaches has at most one term per
+  character class of the pattern, plus one. -/
+  stateBound : ∀ (r : Regex.Regex) (T : List Regex.Regex) (p : Option Char) (c : Char),
+    r.Reach T → r.Reach (Regex.Regex.next r p c T) ∧ T.length ≤ r.leaves + 1
+
 theorem theVerifiedConstraint : VerifiedConstraint where
   validateIff _ c x := Keel.Constraint.validatePy_iff c x
   validateSound _ c _ _ h := Keel.Constraint.validate_sound c h
@@ -99,5 +116,11 @@ theorem theVerifiedModel : VerifiedModel where
   schemaSound _ _ _ _ _ h := Model.schema_sound h
   dumpConforms _ _ _ a := Model.model_dump_conforms a
   locPrefix _ _ _ cfg kvs es h := Model.validate_loc_prefix cfg kvs es h
+
+theorem theVerifiedRegex : VerifiedRegex where
+  deriveCorrect r p c u n := Regex.Regex.derive_correct p c r u n
+  searchCorrect := Regex.Regex.search_correct
+  patternTest _ _ h s := Regex.ofSource_test h s
+  stateBound _ _ p c h := ⟨Regex.Regex.reach_next p c h, Regex.Regex.reach_length_le h⟩
 
 end LeanPydantic

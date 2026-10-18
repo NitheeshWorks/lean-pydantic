@@ -187,6 +187,18 @@ def schemaCases : List Case :=
 
 /-- Cases written out by hand, for behaviour the table does not reach. -/
 def handCases : List Case := [
+  { upstream := "pydantic/tests/test_types.py::test_pattern"
+    name := "pattern: no catastrophic backtracking (200000 characters)"
+    run := do
+      let text := String.ofList (List.replicate 200000 'a') ++ "!"
+      let pats := ["^(a+)+$", "(a|aa)*b", "^(\\w+\\s?)*$", "(a*)*$b", "^(a|a?)+$"]
+      let t0 ← IO.monoMsNow
+      let ok := pats.all fun p => match Regex.compile p with
+        | .ok r => !r.search text
+        | .error _ => false
+      let ms := (← IO.monoMsNow) - t0
+      IO.println s!"  ReDoS probe: {pats.length} patterns on {text.length} characters in {ms} ms"
+      pure ok },
   { upstream := "pydantic/tests/test_main.py::test_success"
     name := "deriving Model inside a namespace"
     run := do
@@ -237,7 +249,23 @@ def dumpCases : List Case :=
         | none => pure false
         | some f => check expected (f input o) }
 
-def cases : List Case := tableCases ++ schemaCases ++ dumpCases ++ handCases
+/-- Patterns lean-pydantic rejects though Rust's `regex` accepts them
+(documented in docs/traceability.toml, `regex.unsupported-syntax`): inline
+flags, Unicode property classes, POSIX classes and `\b{..}`. -/
+def unsupportedPatterns : List String :=
+  ["(?i)ab", "(?s).", "\\p{L}", "^\\p{L}$", "[[:alpha:]]", "\\b{start}a"]
+
+def regexCases : List Case :=
+  regexTable.map fun (pat, input, expected) =>
+    { upstream := "pydantic/tests/test_types.py::test_pattern"
+      name := s!"pattern {pat} on {input.take 20}"
+      run :=
+        let got := match Regex.compile pat with
+          | .ok r => toString (r.search input)
+          | .error _ => "error"
+        if pat ∈ unsupportedPatterns then check "error" got else check expected got }
+
+def cases : List Case := tableCases ++ schemaCases ++ dumpCases ++ handCases ++ regexCases
 
 def main (args : List String) : IO UInt32 := do
   let verbose := args.contains "-v"

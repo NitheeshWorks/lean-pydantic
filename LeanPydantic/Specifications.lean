@@ -1,1 +1,2 @@
 import LeanPydantic.Specifications.Laws
+import LeanPydantic.Specifications.Regex

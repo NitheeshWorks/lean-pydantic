@@ -1,5 +1,6 @@
 import Lean
 import LeanPydantic.APIs.Model
+import LeanPydantic.RepoImpl.Regex.Parse
 
 /-!
 # APIs: `α ∣ c` under `open LeanPydantic`, and its literals
@@ -14,6 +15,11 @@ A literal whose expected type is a refinement is checked against the
 constraint at elaboration time (`decide`), so `discount : Nat ∣ le 100 := 0`
 needs no proof and `:= 101` is a type error. Keel does this for numerals and
 strings; this module adds decimal literals (`price : Decimal ∣ gt 0 := 2.5`).
+
+`pattern "^[a-z]+$"` takes a string literal as the pattern, in Rust `regex`
+syntax as pydantic's `pattern=`. The literal is compiled when the code is
+elaborated: an invalid pattern is a compile error, as it is a `SchemaError`
+when pydantic builds the schema.
 -/
 
 namespace LeanPydantic
@@ -32,5 +38,17 @@ with the constraint decided. -/
   let ty ← instantiateMVars ty
   unless ty.isAppOfArity ``Keel.Refined 2 do throwUnsupportedSyntax
   elabTerm (← `(Subtype.mk $(⟨stx⟩) (by decide))) ty
+
+open Lean Elab Term Meta in
+/-- A string literal where a `Keel.Pattern` is expected: the regex it spells,
+compiled now, so an invalid one is an error here. -/
+@[term_elab str] def elabPatternLiteral : TermElab := fun stx expected? => do
+  let some ty := expected? | throwUnsupportedSyntax
+  let ty ← whnfR (← instantiateMVars ty)
+  unless ty.isConstOf ``Keel.Pattern do throwUnsupportedSyntax
+  let some src := stx.isStrLit? | throwUnsupportedSyntax
+  match Regex.compile src with
+  | .error e => throwError "invalid pattern {repr src}: {e}"
+  | .ok _ => elabTerm (← `(LeanPydantic.Regex.ofSource $(⟨stx⟩))) ty
 
 end LeanPydantic
