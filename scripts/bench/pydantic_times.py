@@ -36,7 +36,7 @@ for name, ta, s in cases[:3]:
     v = json.loads(s)
     print(f'{name} (validate_python): {best(ta.validate_python, v):.1f} ms')
 
-# patterns (Lean: Regex.searchDfa on the same text)
+# patterns (Lean: the compiled pattern, Regex.ofSource, on the same text)
 from typing import Annotated
 from pydantic import Field
 wide = '(a|b)' * 50 + 'c'

@@ -35,13 +35,11 @@ The parsed rows give pydantic-core a built Python `dict`, so it does no
 key collapsing, while here the members arrive as a list and are collapsed
 with a hash index.
 
-The pattern rows run the lazy DFA (`Regex.searchDfa`): doubling the text
-leaves the time flat, as every character after the first few is one cached
-transition. What remains is building the states, about 1 ms each for the
-counted repetition's hundred states of large terms (each is hashed and
-compared whole); Rust's `regex` compiles the pattern up front.
-
-Run with `lake exe bench`.
+The pattern rows run compiled patterns (`Regex.ofSource`: derivative terms
+numbered once, tables of linear forms, steps cached per call by term set).
+pydantic-core (Rust `regex`): the email-like pattern 0.001 ms per call,
+`^(a{1,50})+$` on 1000 characters 0.003 ms, `[ab]*a[ab]{100}c` on 20 000
+random characters 22 ms, `(\w{1,10}\s?){1,10}x` 0.058 ms per call.
 -/
 
 open LeanPydantic
@@ -61,6 +59,22 @@ def wideArray (n : Nat) : String := Id.run do
   for i in [0:n] do
     s := s ++ (if i = 0 then "" else ",") ++ toString (i / 2)
   return s ++ "]"
+
+/-- `n` pseudo-random `a`/`b` characters (a fixed linear congruential sequence). -/
+def randomAB (n : Nat) : String := Id.run do
+  let mut x : UInt64 := 88172645463325252
+  let mut cs : Array Char := Array.mkEmpty n
+  for _ in [0:n] do
+    x := x * 6364136223846793005 + 1442695040888963407
+    cs := cs.push (if (x >>> 33) % 2 == 0 then 'a' else 'b')
+  return String.ofList cs.toList
+
+/-- The bench patterns, compiled once (as a pattern literal in a type is). -/
+def countedPat : Keel.Pattern := Regex.ofSource "^(a{1,50})+$"
+def widePat : Keel.Pattern := Regex.ofSource "(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)c"
+def emailPat : Keel.Pattern := Regex.ofSource "^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,255}\\.[a-z]{2,63}$"
+def thrashPat : Keel.Pattern := Regex.ofSource "[ab]*a[ab]{100}c"
+def wordsPat : Keel.Pattern := Regex.ofSource "(\\w{1,10}\\s?){1,10}x"
 
 /-- A parsed JSON value (`null` if the text does not parse). -/
 def parsed (s : String) : LeanJson.Json :=
@@ -96,15 +110,32 @@ def benches : List Bench :=
   let tpd := TypeAdapter.new (PyDecimal ∣ gt 0)
   let digits (n : Nat) : String := String.ofList (List.replicate n '7')
   let rejects {α} (r : Except ValidationError α) : Bool := match r with | .ok _ => false | .error _ => true
-  let rx (src : String) : Regex.Regex := match Regex.compile src with | .ok r => r | .error _ => .empty
-  let counted := rx "^(a{1,50})+$"
-  let wide := rx (String.join (List.replicate 50 "(a|b)") ++ "c")
+  let counted := countedPat.test
+  let wide := widePat.test
+  let email := emailPat.test
+  let thrash := thrashPat.test
   let as (n : Nat) : String := String.ofList (List.replicate n 'a')
   let abs (n : Nat) : String := String.join (List.replicate (n / 2) "ab")
-  [⟨"pattern ^(a{1,50})+$ on 10 000 characters", 300, as 10000, fun s => counted.searchDfa s⟩,
-    ⟨"pattern ^(a{1,50})+$ on 20 000 characters", 300, as 20000, fun s => counted.searchDfa s⟩,
-    ⟨"pattern (a|b) x50 then c on 50 000 characters", 100, abs 50000, fun s => !wide.searchDfa s⟩,
-    ⟨"pattern (a|b) x50 then c on 100 000 characters", 100, abs 100000, fun s => !wide.searchDfa s⟩,
+  -- 1000 distinct 64-character addresses, so no call can be shared
+  let emails := (List.range 1000).map fun i =>
+    let tag := toString (10000 + i)
+    "first.last+" ++ tag ++ String.ofList (List.replicate 24 'x') ++ "@mail.example-domain.com"
+  let runs := (List.range 1000).map fun i => as (995 + i % 10)
+  [⟨"pattern email-like, 1000 calls on 64 characters (0.1 ms per call)", 100, emails, fun l => l.all email⟩,
+    ⟨"pattern ^(a{1,50})+$, 1000 calls on 995-1004 characters (1 ms per call)", 1000, runs, fun l => l.all counted⟩,
+    ⟨"pattern [ab]*a[ab]{100}c on 10 000 random a/b", 150, randomAB 10000, fun s => !thrash s⟩,
+    ⟨"pattern [ab]*a[ab]{100}c on 20 000 random a/b", 200, randomAB 20000, fun s => !thrash s⟩,
+    ⟨"pattern ^(a{1,50})+$ on 20 000 characters", 50, as 20000, fun s => counted s⟩,
+    ⟨"pattern (a|b) x50 then c on 100 000 characters", 50, abs 100000, fun s => !wide s⟩,
+    ⟨"pattern (\\w{1,10}\\s?){1,10}x, 1000 calls on 30 characters", 200, (List.range 1000).map (fun i => "word" ++ toString (100000 + i) ++ " another phrase here"), fun l => l.all fun s => !wordsPat.test s⟩,
+    ⟨"compile (\\w{1,30}\\s?){1,20}x", 2000, "(\\w{1,30}\\s?){1,20}x", fun src =>
+      match Regex.compile src with
+      | .ok r => (Regex.Regex.Nfa.build r).isSome
+      | .error _ => true⟩,
+    ⟨"compile the email-like pattern", 200, "^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,255}\\.[a-z]{2,63}$", fun src =>
+      match Regex.compile src with
+      | .ok r => (Regex.Regex.Nfa.build r).isSome
+      | .error _ => false⟩,
     ⟨"int, 65000-digit JSON number (validate_json)", 50, digits 65000, fun s => rejects (ti.validate_json s)⟩,
     ⟨"int, 65000-digit string, lax (validate_json)", 50, "\"" ++ digits 65000 ++ "\"", fun s => rejects (ti.validate_json s)⟩,
     ⟨"int, 1 MiB digit string, lax (validate_python)", 100, digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,

@@ -273,7 +273,7 @@ def handCases : List Case := [
       let pats := ["^(a+)+$", "(a|aa)*b", "^(\\w+\\s?)*$", "(a*)*$b", "^(a|a?)+$"]
       let t0 ← IO.monoMsNow
       let ok := pats.all fun p => match Regex.compile p with
-        | .ok r => !r.searchDfa text
+        | .ok r => !(match Regex.Regex.Nfa.build r with | some N => N.search text | none => r.search text)
         | .error _ => false
       let ms := (← IO.monoMsNow) - t0
       IO.println s!"  ReDoS probe: {pats.length} patterns on {text.length} characters in {ms} ms"

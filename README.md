@@ -135,9 +135,10 @@ checks they use only Lean's three axioms).
 * **`pattern` is a verified, linear-time matcher.** Partial derivatives finish
   exactly the matches (`derive_correct`), the scan decides Rust's unanchored
   `is_match` (`search_correct`), and its state is bounded by the pattern's size
-  (`reach_length_le`): no input can make it backtrack. Patterns run it as a
-  lazily built DFA, one cached transition per character, proved to be the
-  scan (`searchDfa_eq`), with a bounded table.
+  (`reach_length_le`): no input can make it backtrack. Patterns run it compiled: the derivative terms are numbered once
+  per pattern, with their linear forms as tables, so a character costs one
+  class test per live edge and no term is built; within a call the steps
+  are cached by term set. Both are proved to be the scan (`Nfa.search_eq`).
 * **Hostile sizes are linear.** Dict keys collapse through a hash index
   (`dedupIdx_eq`), an int string longer than 4300 digits is rejected before
   conversion, and decimal bounds never build `10 ^ exponent`

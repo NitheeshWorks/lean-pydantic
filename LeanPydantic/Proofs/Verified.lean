@@ -87,8 +87,9 @@ structure VerifiedRegex : Prop where
     r.Matches p (c :: u) n ↔ ∃ q ∈ Regex.Regex.pd p c r, q.Matches (some c) u n
   /-- The scan decides the unanchored search (Rust's `is_match`). -/
   searchCorrect : ∀ (r : Regex.Regex) (s : String), r.search s = true ↔ r.Search s.toList
-  /-- The lazy DFA that patterns run is the scan, transition caching and all. -/
-  dfaEq : ∀ (r : Regex.Regex) (s : String), r.searchDfa s = r.search s
+  /-- The compiled matcher that patterns run (numbered terms, precomputed
+  tables) is the scan. -/
+  compiledEq : ∀ (r : Regex.Regex) (N : Regex.Regex.Nfa r) (s : String), N.search s = r.search s
   /-- A compiled pattern tests exactly that search. -/
   patternTest : ∀ (src : String) (r : Regex.Regex), Regex.compile src = .ok r →
     ∀ s, (Regex.ofSource src).test s = true ↔ r.Search s.toList
@@ -177,7 +178,7 @@ theorem theVerifiedSurface : VerifiedSurface where
 theorem theVerifiedRegex : VerifiedRegex where
   deriveCorrect r p c u n := Regex.Regex.derive_correct p c r u n
   searchCorrect := Regex.Regex.search_correct
-  dfaEq := Regex.Regex.searchDfa_eq
+  compiledEq _ N s := N.search_eq s
   patternTest _ _ h s := Regex.ofSource_test h s
   stateBound _ _ p c h := ⟨Regex.Regex.reach_next p c h, Regex.Regex.reach_length_le h⟩
 

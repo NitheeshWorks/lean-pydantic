@@ -8,6 +8,7 @@ import LeanPydantic.RepoImpl.Regex.Parse
 * `derive_correct`: the partial derivatives by `c` are exactly the ways to
   finish a match that starts with `c` (Antimirov's theorem, with context).
 * `search_correct`: the scan decides `Search`, Rust's `is_match`.
+* `Nfa.search_eq`: the compiled matcher patterns run is the scan.
 * `reach_length_le`: every state of the scan has at most `leaves r + 1`
   terms, so the work per character is bounded by the pattern and the scan is
   linear in the text. No input makes it backtrack.
@@ -211,6 +212,137 @@ theorem mem_next {r q : Regex} {c : Char} {T : List Regex} :
     q ∈ next r p c T ↔ q = r ∨ ∃ t ∈ T, q ∈ pd p c t := by
   simp [next, uniq, List.mem_insert_iff, mem_foldl_insert, List.mem_flatMap]
 
+/-! ## The compiled matcher is the scan -/
+
+namespace Nfa
+
+variable {r : Regex} (N : Nfa r)
+
+/-- The terms the numbers in `S` stand for. -/
+def Den (S : List Nat) (T : List Regex) : Prop := ∀ q, q ∈ T ↔ ∃ j ∈ S, N.terms[j]? = some q
+
+theorem some_of_lt {j : Nat} (h : j < N.terms.size) : ∃ t, N.terms[j]? = some t :=
+  ⟨N.terms[j], by simp [h]⟩
+
+theorem lt_of_some {j : Nat} {t : Regex} (h : N.terms[j]? = some t) : j < N.terms.size := by
+  rcases Nat.lt_or_ge j N.terms.size with h' | h'
+  · exact h'
+  · simp [Array.getElem?_eq_none h'] at h
+
+theorem any_nul {S : List Nat} {T : List Regex} (hd : N.Den S T) (p : Option Char) (c : Char) :
+    S.any (N.nulAt · (ctx p) (isWord c)) = T.any (nullable p (some c)) := by
+  apply Bool.eq_iff_iff.2
+  simp only [List.any_eq_true]
+  constructor
+  · rintro ⟨j, hj, hn⟩
+    unfold nulAt at hn
+    split at hn
+    · rename_i hlt
+      obtain ⟨t, ht⟩ := N.some_of_lt hlt
+      rw [getD2, N.hNul j t ht] at hn
+      exact ⟨t, (hd t).2 ⟨j, hj, ht⟩, by rw [nullable_eq]; exact hn⟩
+    · cases hn
+  · rintro ⟨q, hq, hn⟩
+    obtain ⟨j, hj, ht⟩ := (hd q).1 hq
+    refine ⟨j, hj, ?_⟩
+    unfold nulAt
+    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, N.hNul j q ht]
+    rw [nullable_eq] at hn; exact hn
+
+theorem any_fin {S : List Nat} {T : List Regex} (hd : N.Den S T) (p : Option Char) :
+    S.any (N.finAt · (ctx p)) = T.any (nullable p none) := by
+  apply Bool.eq_iff_iff.2
+  simp only [List.any_eq_true]
+  constructor
+  · rintro ⟨j, hj, hn⟩
+    unfold finAt at hn
+    split at hn
+    · rename_i hlt
+      obtain ⟨t, ht⟩ := N.some_of_lt hlt
+      rw [getD2, N.hFin j t ht] at hn
+      exact ⟨t, (hd t).2 ⟨j, hj, ht⟩, by rw [nullable_eq]; exact hn⟩
+    · cases hn
+  · rintro ⟨q, hq, hn⟩
+    obtain ⟨j, hj, ht⟩ := (hd q).1 hq
+    refine ⟨j, hj, ?_⟩
+    unfold finAt
+    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, N.hFin j q ht]
+    rw [nullable_eq] at hn; exact hn
+
+/-- One term's numbered derivatives stand for its partial derivatives. -/
+theorem edges_den {j : Nat} {t : Regex} (ht : N.terms[j]? = some t) (p : Option Char) (c : Char) (q : Regex) :
+    (∃ e ∈ (N.edges j (ctx p) (isWord c)).toList, e.1.test c = true ∧ N.terms[e.2]? = some q) ↔
+      q ∈ pd p c t := by
+  rw [pd_eq_lin, pick, List.mem_filterMap]
+  have hm := N.hTrans j t ht (ctx p) (isWord c)
+  constructor
+  · rintro ⟨e, he, hc, hq⟩
+    have : (e.1, some q) ∈ (lin (ctx p) (isWord c) t).map (fun kq => (kq.1, some kq.2)) := by
+      rw [← hm, List.mem_map]; exact ⟨e, by rw [← N.edges_eq]; exact he, by rw [hq]⟩
+    obtain ⟨kq, hkq, he'⟩ := List.mem_map.1 this
+    simp only [Prod.mk.injEq, Option.some.injEq] at he'
+    exact ⟨kq, hkq, by rw [he'.1, hc, he'.2]; rfl⟩
+  · rintro ⟨kq, hkq, hc⟩
+    split at hc
+    · rename_i htest
+      simp only [Option.some.injEq] at hc
+      have : (kq.1, some kq.2) ∈ ((N.edges j (ctx p) (isWord c)).toList).map (fun e => (e.1, N.terms[e.2]?)) := by
+        rw [N.edges_eq, hm, List.mem_map]; exact ⟨kq, hkq, rfl⟩
+      obtain ⟨e, he, he'⟩ := List.mem_map.1 this
+      simp only [Prod.mk.injEq] at he'
+      exact ⟨e, he, by rw [he'.1]; exact htest, by rw [he'.2, hc]⟩
+    · cases hc
+
+theorem next_den {S : List Nat} {T : List Regex} (hd : N.Den S T) (p : Option Char) (c : Char) :
+    N.Den (N.next (ctx p) c S) (Regex.next r p c T) := by
+  intro q
+  rw [mem_next]
+  simp only [Nfa.next, mem_dedupIds, List.mem_cons, List.mem_flatMap]
+  constructor
+  · rintro (rfl | ⟨t, ht, hq⟩)
+    · exact ⟨0, .inl rfl, N.start⟩
+    · obtain ⟨j, hj, hjt⟩ := (hd t).1 ht
+      obtain ⟨e, he, hc, hq'⟩ := (N.edges_den hjt p c q).2 hq
+      refine ⟨e.2, .inr ⟨j, hj, ?_⟩, hq'⟩
+      simp only [N.lt_of_some hjt, ↓reduceIte]; rw [List.mem_filterMap]
+      exact ⟨e, he, by simp [hc]⟩
+  · rintro ⟨i, (rfl | ⟨j, hj, hi⟩), hq⟩
+    · left; rw [N.start] at hq; exact (Option.some.inj hq).symm
+    · right
+      split at hi
+      · rename_i hlt
+        obtain ⟨t, ht⟩ := N.some_of_lt hlt
+        rw [List.mem_filterMap] at hi
+        obtain ⟨e, he, hei⟩ := hi
+        split at hei
+        · rename_i hc
+          simp only [Option.some.injEq] at hei; subst hei
+          exact ⟨t, (hd t).2 ⟨j, hj, ht⟩, (N.edges_den ht p c q).1 ⟨e, he, hc, hq⟩⟩
+        · cases hei
+      · cases hi
+
+/-- **The compiled matcher is the scan.** -/
+theorem run_eq : ∀ (cs : List Char) (p : Option Char) (S : List Nat) (T : List Regex),
+    N.Den S T → N.run p cs S = scan r p cs T
+  | [], p, S, T, hd => by simp only [run, scan]; exact N.any_fin hd p
+  | c :: cs, p, S, T, hd => by
+    simp only [run, scan, N.any_nul hd p c]
+    split
+    · rfl
+    · exact run_eq cs (some c) _ _ (fun q => by
+        rw [N.next_den hd p c q]; simp only [N.nextFast_mem])
+
+theorem search_eq (s : String) : N.search s = r.search s := by
+  rw [N.search_run]; unfold Regex.search
+  apply N.run_eq
+  intro q
+  simp only [List.mem_singleton, exists_eq_left]
+  constructor
+  · rintro rfl; exact N.start
+  · intro h; rw [N.start] at h; exact (Option.some.inj h).symm
+
+end Nfa
+
 /-- What the scan's state means after the text `pre`: a term of it matches
 `v` exactly when `r` matches from a position in `pre` through `v`. -/
 def Inv (r : Regex) (pre : List Char) (T : List Regex) : Prop :=
@@ -410,12 +542,16 @@ source that compiles to `r` accepts a string exactly when `r` matches some
 segment of it. -/
 theorem ofSource_test {src : String} {r : Regex} (h : compile src = .ok r) (s : String) :
     (ofSource src).test s = true ↔ r.Search s.toList := by
-  simp only [ofSource, h, Regex.searchDfa_eq]
-  exact Regex.search_correct r s
+  simp only [ofSource, h]
+  split
+  · rename_i N _; show N.search s = true ↔ _; rw [N.search_eq]; exact Regex.search_correct r s
+  · exact Regex.search_correct r s
 
 /-- A compiled pattern's source is the one given (it is the schema's
 `pattern` and the error's `ctx.pattern`). -/
 theorem ofSource_source (src : String) : (ofSource src).source = src := by
-  unfold ofSource; split <;> rfl
+  unfold ofSource; split
+  · split <;> rfl
+  · rfl
 
 end LeanPydantic.Regex

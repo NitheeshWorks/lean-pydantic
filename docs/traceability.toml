@@ -356,7 +356,7 @@ upstream = "pydantic/tests/test_types.py::test_pattern"
 title = "pattern: Rust regex syntax, unanchored search, linear time, Unicode \\d \\w \\s"
 status = "implemented"
 realises = ["LeanPydantic.Regex.compile", "LeanPydantic.Regex.Regex.search", "LeanPydantic.Regex.ofSource"]
-theorem = ["LeanPydantic.Regex.Regex.derive_correct", "LeanPydantic.Regex.Regex.search_correct", "LeanPydantic.Regex.Regex.searchDfa_eq", "LeanPydantic.Regex.Regex.reach_length_le", "LeanPydantic.Regex.ofSource_test", "LeanPydantic.theVerifiedRegex"]
+theorem = ["LeanPydantic.Regex.Regex.derive_correct", "LeanPydantic.Regex.Regex.search_correct", "LeanPydantic.Regex.Regex.Nfa.search_eq", "LeanPydantic.Regex.Regex.pd_eq_lin", "LeanPydantic.Regex.Regex.reach_length_le", "LeanPydantic.Regex.ofSource_test", "LeanPydantic.theVerifiedRegex"]
 test = ["tests/Conformance.lean::regexCases", "tests/Props.lean::properties"]
 notes = "The parser is tested against pydantic (4573 cases); the matcher is proved against the semantics in Specifications/Regex.lean."
 

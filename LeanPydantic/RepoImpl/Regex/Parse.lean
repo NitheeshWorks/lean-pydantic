@@ -1,5 +1,5 @@
 import Keel
-import LeanPydantic.RepoImpl.Regex.Dfa
+import LeanPydantic.RepoImpl.Regex.Nfa
 
 /-!
 # RepoImpl: compiling a pattern
@@ -366,10 +366,14 @@ def compile (src : String) : Except String Regex :=
 
 /-- A Keel pattern from its source: the source, and the compiled matcher.
 `pattern "…"` in a refinement checks at elaboration time that the source
-compiles, so the fallback is never taken there. -/
+compiles, so the fallback is never taken there. The pattern is compiled
+(`Nfa.build`) once, when the pattern value is made, not per test. -/
 def ofSource (src : String) : Keel.Pattern :=
   match compile src with
-  | .ok r => ⟨src, r.searchDfa⟩
+  | .ok r =>
+    match Regex.Nfa.build r with
+    | some N => ⟨src, N.search⟩
+    | none => ⟨src, r.search⟩
   | .error _ => ⟨src, fun _ => false⟩
 
 end LeanPydantic.Regex
