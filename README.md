@@ -13,8 +13,8 @@ depends on: [lean-json](https://github.com/NitheeshWorks/lean-json) and
 ## Quickstart
 
 pydantic's own first example (`docs/index.md`, "Pydantic examples"),
-translated. `datetime` and `dict` fields arrive with the next milestone, so
-`signup_ts` is a string here and `tastes` a single positive integer.
+translated. `datetime` fields arrive with a later milestone, so `signup_ts`
+is a string here and `tastes` a single positive integer.
 
 ```python
 from pydantic import BaseModel, PositiveInt
@@ -65,7 +65,18 @@ and so is `User.model_json_schema`.
 | pydantic | lean-pydantic |
 |---|---|
 | `class Item(BaseModel)` | `structure Item where … deriving Model` |
-| `price: float` | `price : Decimal` (an exact `FiniteFloat`) |
+| `price: float` | `price : Float` (IEEE binary64, `inf`/`nan` allowed, dumped as `null`) |
+| `price: FiniteFloat` | `price : Decimal` (exact) |
+| `price: decimal.Decimal`, `condecimal(max_digits=5, decimal_places=2)` | `PyDecimal`, `Condecimal (some 5) (some 2)` |
+| `list[T]`, `dict[str, T]`, `set[T]`, `tuple[A, B]` | `List T`, `Dict T`, `PySet T`, `A × B` |
+| `Union[int, str]` (smart mode) | `Int ⊕ String` |
+| `Literal['a', 'b']`, `class Color(str, Enum)` | `String ∣ oneOf ["a", "b"]`, `inductive Color … deriving Model` |
+| `item_id: int = Field(alias='itemId')` | `item_id : Alias "itemId" Int` |
+| `tags: list[str] = Field(default_factory=list)` | `tags : Factory (List String) := []` |
+| `Field(pattern=r'^\d+$')` | `String ∣ pattern "^\\d+$"` (compiled, and checked, at compile time) |
+| `Annotated[int, AfterValidator(f)]` (also `Before`, `Wrap`) | `After Int f`, `Before Int f`, `Wrap Int f` |
+| `Annotated[int, PlainSerializer(g)]` (also `WrapSerializer`) | `Serialize Int g`, `WrapSerialize Int g` |
+| nested models | a model-typed field; errors at `["images", 0, "url"]`, schemas under `$defs` |
 | `x: int`, `n: NonNegativeInt`, `s: str`, `b: bool` | `Int`, `Nat`, `String`, `Bool` |
 | `q: str \| None = None` | `q : Option String := none` |
 | `Annotated[float, Field(gt=0)]` | `Decimal ∣ gt 0` |
@@ -74,6 +85,8 @@ and so is `User.model_json_schema`.
 | `Item.model_validate(obj, strict=True)` | `Item.model_validate obj (strict := true)` |
 | `Item.model_validate_json(data)` | `Item.model_validate_json data` |
 | `item.model_dump(exclude_none=True)` | `item.model_dump (exclude_none := true)` |
+| `item.model_dump(by_alias=True, exclude_unset=True)` | `item.model_dump (by_alias := true) (exclude_unset := true) (set_from := some input)` |
+| `Item.model_validate(obj, from_attributes=True)` | `Item.model_validate obj (from_attributes := true)` |
 | `item.model_dump_json(indent=2)` | `item.model_dump_json (indent := some 2)` |
 | `Item.model_json_schema()` | `Item.model_json_schema` |
 | `TypeAdapter(int).validate_python('42')` | `(TypeAdapter.new Int).validate_python (json% "42")` |
@@ -111,14 +124,28 @@ checks they use only Lean's three axioms).
   of its fields (`Model.validate_loc_prefix`), by Keel's `Validator.at`.
 * **Exact numbers.** Bounds compare exact decimals at any common exponent
   (`Num.rel_at`, `Num.rel_denotes`).
+* **Containers and choices are lawful.** `List`, `Dict`, tuples, literals and
+  derived enums of lawful types have the round trip and schema soundness
+  (`VerifiedSurface`). Smart unions pick the leftmost exact strict match,
+  then the leftmost strict one (`union_smart_leftmost`, `union_smart_strict`).
+* **`exclude_unset` writes only what was set** (`Model.exclude_unset_subset`),
+  for every derived model, as a law of the field combinator.
+* **Schemas are complete for scalars**: every input the schema of `bool`,
+  `str`, `float` or `Optional` of them allows validates (`schema_complete_*`).
+* **`pattern` is a verified, linear-time matcher.** Partial derivatives finish
+  exactly the matches (`derive_correct`), the scan decides Rust's unanchored
+  `is_match` (`search_correct`), and its state is bounded by the pattern's size
+  (`reach_length_le`): no input can make it backtrack.
 
 These come from a few general facts: the field combinator is lawful
 (`Fields.field_lawful`), and the deriving handler builds each model's proof
 from it, never a proof about a particular model.
 
-Tested rather than proved: the lax coercions (`'0042'` to `42`, `'yes'` to
-`true`), which are checked byte for byte against pydantic on 581 generated
-cases (`tests/ConformanceTable.lean`) and by properties.
+Tested rather than proved, byte for byte against pydantic 2.14.1 on over
+6000 generated cases (`tests/ConformanceTable.lean`) and by properties: the
+lax coercions (`'0042'` to `42`, `'yes'` to `true`), the pattern parser,
+`Float` (IEEE operations are opaque to proofs), `PyDecimal`, sets, and the
+functional validators and serializers.
 
 ## Getting started
 

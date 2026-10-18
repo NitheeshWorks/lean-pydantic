@@ -86,19 +86,38 @@ Listed here with the reason, and in `docs/traceability.toml` with
   formatting question, checked byte for byte against pydantic.
 * **The JSON-text round trip** (`model_validate_json (model_dump_json a)`):
   it rests on lean-json's `from_json_to_json`; tested in `Props`.
+* **The pattern parser** (`Regex.compile`): Rust's regex syntax has no
+  independent grammar to prove against; 4573 pattern-and-input cases are run
+  through pydantic. The matcher it produces is proved (`Proofs/Regex.lean`).
+* **`Float`**: Lean's float operations are opaque externs, so the parse/print
+  round trip is a property over random bit patterns (`toBits`), not a theorem.
+* **`PyDecimal`**: `str(Decimal)` and `Decimal(str)` are a port of CPython's
+  formatting; tested both against pydantic and as a round trip in `Props`.
+* **Validators and serializers** (`After`, `Before`, `Wrap`, `Serialize`,
+  `WrapSerialize`): user functions may reject or rewrite a dump, so no round
+  trip holds in general.
+* **Unions and sets**: no `LawfulJson`; unions need disjoint choices for a
+  round trip, and pydantic's set schema contradicts its validator (UP-054).
 
 ### Deviations from upstream
 
 * `Decimal` is pydantic's `FiniteFloat`, held exactly: no IEEE rounding, no
   `float` tolerance in `multiple_of`, and huge literals keep their value
   (pydantic: `inf`). NaN and the infinities are `finite_number`. Plain
-  `float` (`allow_inf_nan=True`) is not provided yet.
+  `float` is `Float`, with pydantic's IEEE semantics.
+* `PySet` dumps in input order (Python: hash order).
+* `pattern` rejects inline flags, `\p{..}`, POSIX classes and `\b{..}` at
+  compile time; Rust accepts them.
+* `PyDecimal` reads only ASCII digits in strings.
+* UP-045 (strict `Literal[1, 2]` accepting `True`): matched in lax mode,
+  rejected in strict mode, so the strict schema law holds.
 * A constraint given twice must hold both times (pydantic keeps the last);
   the schema keeps pydantic's last-wins keyword.
 * Field titles use ASCII case mapping.
 * Matched on purpose although upstream is wrong: UP-032 (`'0-5'` is `-5`),
   UP-033 (`int_parsing_size` message on floats), UP-034 (`NaN` in
-  `ValidationError.json()`).
+  `ValidationError.json()`), UP-054 (set schema `uniqueItems` while duplicates
+  validate).
 
 
 ## Tests

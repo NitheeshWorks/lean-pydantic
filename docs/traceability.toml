@@ -232,3 +232,155 @@ title = "TypeAdapter(T): validate_python, validate_json, dump_python, dump_json,
 status = "implemented"
 realises = ["LeanPydantic.TypeAdapter.validate_python", "LeanPydantic.TypeAdapter.validate_json", "LeanPydantic.TypeAdapter.json_schema"]
 test = ["tests/Conformance.lean::tableCases"]
+
+# ---------------------------------------------------------------- m2: containers, choices, functional
+
+[[requirement]]
+id = "containers.list-dict"
+upstream = "pydantic-core/tests/validators/test_list.py::test_list_json"
+title = "list[T] and dict[str, T]: elements under their index or key, every element's errors, length constraints"
+status = "implemented"
+realises = ["LeanPydantic.fromJsonList", "LeanPydantic.fromJsonDict", "LeanPydantic.constrainedList", "LeanPydantic.Dict"]
+theorem = ["LeanPydantic.VerifiedSurface.listLawful", "LeanPydantic.VerifiedSurface.dictLawful", "LeanPydantic.theVerifiedSurface"]
+test = ["tests/Conformance.lean::tableCases"]
+
+[[requirement]]
+id = "containers.nested-models"
+upstream = "pydantic/tests/test_main.py::test_nested_model"
+title = "Nested models: errors located at the nested path (loc [images, 0, url]); $defs/$ref schema documents"
+status = "implemented"
+realises = ["LeanPydantic.Fields.field", "LeanPydantic.Schema.document"]
+theorem = ["LeanPydantic.Model.validate_loc_prefix", "LeanPydantic.Model.schema_sound"]
+test = ["tests/Conformance.lean::tableCases", "tests/Conformance.lean::schemaCases"]
+
+[[requirement]]
+id = "containers.tuple"
+upstream = "pydantic-core/tests/validators/test_tuple.py::test_tuple_json"
+title = "tuple[A, B, ...]: positional items, too_long on extra items, prefixItems schema"
+status = "implemented"
+realises = ["LeanPydantic.fromJsonProd", "LeanPydantic.tupleProd"]
+theorem = ["LeanPydantic.VerifiedSurface.tupleLawful", "LeanPydantic.fromJson_prod"]
+test = ["tests/Conformance.lean::tableCases"]
+
+[[requirement]]
+id = "sets.unique-items"
+upstream = "pydantic-core/tests/validators/test_set.py::test_set_ints_both"
+title = "set[T]: lists accepted and deduplicated, set_type, too_long with an unknown length; schema uniqueItems"
+status = "deviation"
+realises = ["LeanPydantic.PySet", "LeanPydantic.PySet.ofList"]
+test = ["tests/Conformance.lean::tableCases"]
+notes = "Matches pydantic byte for byte, except the dump order: Python iterates a set in hash order (per run for strings), lean-pydantic in input order. No LawfulJson: pydantic's schema says uniqueItems but strict validation accepts duplicates (UP-054)."
+
+[[requirement]]
+id = "choice.literal-enum"
+upstream = "pydantic-core/tests/validators/test_literal.py::test_literal_py_and_json"
+title = "Literal[...] and enums: Python-repr expected lists, enum schema under $defs"
+status = "implemented"
+realises = ["LeanPydantic.literalFind", "LeanPydantic.pyRepr", "LeanPydantic.orJoin", "LeanPydantic.Enumeration"]
+theorem = ["LeanPydantic.VerifiedSurface.literalLawful", "LeanPydantic.VerifiedSurface.enumLawful", "LeanPydantic.fromJson_literal"]
+test = ["tests/Conformance.lean::tableCases"]
+
+[[requirement]]
+id = "choice.literal-strict-bool"
+upstream = "pydantic-core/tests/validators/test_literal.py::test_literal_py_and_json"
+title = "Literal[1, 2] given True in strict mode"
+status = "deviation"
+realises = ["LeanPydantic.laxLiteralInput"]
+theorem = ["LeanPydantic.laxLiteralInput_strict"]
+test = ["tests/Conformance.lean::tableCases"]
+notes = "pydantic accepts True as 1 even strictly, outside its own schema (UP-045). lean-pydantic matches it in lax mode and rejects bool in strict mode, so the strict schema law holds."
+
+[[requirement]]
+id = "choice.smart-union"
+upstream = "pydantic-core/tests/validators/test_union.py::test_smart_union_default"
+title = "Smart unions: exact strict leftmost, then strict leftmost, then lax leftmost; errors tagged per choice"
+status = "partial"
+realises = ["LeanPydantic.smartUnion", "LeanPydantic.fromJsonSum"]
+theorem = ["LeanPydantic.union_smart_leftmost", "LeanPydantic.union_smart_strict"]
+test = ["tests/Conformance.lean::tableCases"]
+notes = "The selection rule is proved; unions have no LawfulJson instance, since a round trip needs disjoint choices (Union[float, int] dumps 1 as 1, read back as the int)."
+
+[[requirement]]
+id = "fields.alias-defaults"
+upstream = "pydantic/tests/test_aliases.py::test_alias_generator"
+title = "Field(alias=...), defaults, default_factory (no schema default), by_alias dumps"
+status = "implemented"
+realises = ["LeanPydantic.Alias", "LeanPydantic.Factory", "LeanPydantic.Fields.field"]
+theorem = ["LeanPydantic.Model.model_validate_model_dump", "LeanPydantic.Fields.field_lawful"]
+test = ["tests/Conformance.lean::dumpCases", "tests/Conformance.lean::handCases"]
+notes = "The round trip is stated for the dump by alias (alias_roundtrip)."
+
+[[requirement]]
+id = "dump.exclude-unset"
+upstream = "pydantic/tests/test_main.py::test_exclude_unset_dict"
+title = "model_dump(exclude_unset, exclude_defaults, exclude_none, include, exclude, by_alias)"
+status = "implemented"
+realises = ["LeanPydantic.Fields.keep", "LeanPydantic.Fields.wasSet", "LeanPydantic.Model.model_dump"]
+theorem = ["LeanPydantic.Model.exclude_unset_subset", "LeanPydantic.VerifiedSurface.excludeUnsetSubset"]
+test = ["tests/Conformance.lean::dumpCases"]
+notes = "A Lean value carries no model_fields_set: exclude_unset reads the input it was validated from (set_from)."
+
+[[requirement]]
+id = "functional.validators-serializers"
+upstream = "pydantic/tests/test_validators.py::test_annotated_validator_after"
+title = "AfterValidator, BeforeValidator, WrapValidator, PlainSerializer, WrapSerializer (field and model level)"
+status = "tested"
+realises = ["LeanPydantic.After", "LeanPydantic.Before", "LeanPydantic.Wrap", "LeanPydantic.Serialize", "LeanPydantic.WrapSerialize"]
+test = ["tests/Conformance.lean::functionalCases"]
+notes = "A validator may reject or rewrite what its type dumps, so there is no round-trip law to prove."
+
+[[requirement]]
+id = "decimal.digits"
+upstream = "pydantic-core/tests/validators/test_decimal.py::test_decimal_digits"
+title = "Decimal: str/int/float inputs as pydantic-core reads them, max_digits/decimal_places/whole digits, str dump"
+status = "tested"
+realises = ["LeanPydantic.PyDecimal", "LeanPydantic.Condecimal", "LeanPydantic.PyDecimal.parse", "LeanPydantic.PyDecimal.toPy", "LeanPydantic.PyDecimal.checkDigits"]
+test = ["tests/Conformance.lean::tableCases", "tests/Props.lean::properties"]
+notes = "Deviation: only ASCII digits are read in strings, and normalize() does not round to 28 digits."
+
+[[requirement]]
+id = "float.python"
+upstream = "pydantic-core/tests/validators/test_float.py::test_float_inf_nan"
+title = "Plain float: IEEE binary64, correctly rounded input, shortest repr, inf/nan, ser_json_inf_nan"
+status = "tested"
+realises = ["LeanPydantic.Scalar.plainFloat", "LeanPydantic.Coerce.strAsNumber", "LeanPydantic.Json.asF64", "LeanPydantic.InfNan"]
+theorem = ["LeanPydantic.schema_complete_float"]
+test = ["tests/Conformance.lean::tableCases", "tests/Props.lean::properties"]
+notes = "print_parse_float is tested (random bit patterns through toBits), not proved: Lean's Float operations are opaque externs."
+
+[[requirement]]
+id = "regex.pattern"
+upstream = "pydantic/tests/test_types.py::test_pattern"
+title = "pattern: Rust regex syntax, unanchored search, linear time, Unicode \\d \\w \\s"
+status = "implemented"
+realises = ["LeanPydantic.Regex.compile", "LeanPydantic.Regex.Regex.search", "LeanPydantic.Regex.ofSource"]
+theorem = ["LeanPydantic.Regex.Regex.derive_correct", "LeanPydantic.Regex.Regex.search_correct", "LeanPydantic.Regex.Regex.reach_length_le", "LeanPydantic.Regex.ofSource_test", "LeanPydantic.theVerifiedRegex"]
+test = ["tests/Conformance.lean::regexCases", "tests/Props.lean::properties"]
+notes = "The parser is tested against pydantic (4573 cases); the matcher is proved against the semantics in Specifications/Regex.lean."
+
+[[requirement]]
+id = "regex.unsupported-syntax"
+upstream = "pydantic/tests/test_types.py::test_pattern"
+title = "Inline flags, \\p{..}, POSIX classes and \\b{..}"
+status = "deviation"
+realises = ["LeanPydantic.Regex.Parse.group"]
+test = ["tests/Conformance.lean::unsupportedPatterns"]
+notes = "Rejected at compile time with an error; Rust's regex accepts them."
+
+[[requirement]]
+id = "model.from-attributes"
+upstream = "pydantic/tests/test_main.py::test_validate_python_from_attributes"
+title = "from_attributes: model_attributes_type for a non-object at any depth (Python mode)"
+status = "implemented"
+realises = ["LeanPydantic.Fields.validate", "LeanPydantic.Cfg"]
+test = ["tests/Conformance.lean::tableCases"]
+
+[[requirement]]
+id = "schema.complete"
+upstream = "pydantic/tests/test_json_schema.py::test_constraints_schema_validation"
+title = "Schema completeness for scalars: every input their schema allows validates"
+status = "partial"
+realises = ["LeanPydantic.SchemaComplete"]
+theorem = ["LeanPydantic.schema_complete_bool", "LeanPydantic.schema_complete_string", "LeanPydantic.schema_complete_float", "LeanPydantic.schema_complete_int", "LeanPydantic.schema_complete_option"]
+test = ["tests/Conformance.lean::schemaCases"]
+notes = "int is complete on integer literals only: {type: integer} allows 1e30 and, strictly, 1.0, which pydantic rejects."
