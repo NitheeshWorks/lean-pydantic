@@ -14,17 +14,22 @@ The bounds are set against pydantic-core 2.14.1 on the same machine
 | input | pydantic-core | here | bound |
 |---|---|---|---|
 | 65000 digits, JSON number or string | 0.1 ms | 3-5 ms | 50 ms |
-| 1 MiB digit string | - | 25-32 ms | 100 ms |
+| 1 MiB digit string | - | 8 ms | 100 ms |
 | dict, 100 000 keys, `validate_json` | 25.5 ms | 78 ms | 150 ms |
 | dict, 200 000 keys + 1000 repeats, `validate_json` | 80.7 ms | 236 ms | 450 ms |
 | set, 200 000 items, `validate_json` | 13.2 ms | 69 ms | 150 ms |
-| dict, 100 000 keys, parsed | 10.7 ms | 38 ms | 75 ms |
-| dict, 200 000 keys, parsed | 27.4 ms | 83-97 ms | 180 ms |
+| dict, 100 000 keys, parsed | 11.2 ms | 25 ms | 75 ms |
+| dict, 200 000 keys, parsed | 32.2 ms | 58-64 ms | 180 ms |
+| dict, 400 000 keys, parsed | 110.7 ms | 150-177 ms | 400 ms |
+| dict, 400 000 keys, `validate_json` | 207.4 ms | 442-508 ms | 1000 ms |
 | set, 200 000 items, parsed | 6.2 ms | 22-24 ms | 50 ms |
 | `^(a{1,50})+$`, 10 000 / 20 000 characters | 0.03 / 0.06 ms | 94 / 94 ms | 300 ms |
 | `(a\|b)` ×50 then `c`, 50 000 / 100 000 characters | 0.15 / 0.33 ms | 24 / 27 ms | 100 ms |
 
 Of `validate_json`'s time on the dict, 50 ms of 78 is lean-json's parser.
+Neither side is exactly linear past 100 000 keys: pydantic-core's own times
+grow 2.9x and 3.4x per doubling from 100 000 to 400 000 keys (hash tables
+outgrow the caches); the parsed rows here grow 2.3x and 2.6x.
 The parsed rows give pydantic-core a built Python `dict`, so it does no
 key collapsing, while here the members arrive as a list and are collapsed
 with a hash index.
@@ -138,6 +143,14 @@ def benches : List Bench :=
     ⟨"dict[str, int], 200000 keys (validate_python)", 180, parsed (wideObject 200000 0), fun j =>
       match ta.validate_python j with
       | .ok d => d.val.entries.length == 200000
+      | .error _ => false⟩,
+    ⟨"dict[str, int], 400000 keys (validate_python)", 400, parsed (wideObject 400000 0), fun j =>
+      match ta.validate_python j with
+      | .ok d => d.val.entries.length == 400000
+      | .error _ => false⟩,
+    ⟨"dict[str, int], 400000 keys (validate_json)", 1000, wideObject 400000 0, fun s =>
+      match ta.validate_json s with
+      | .ok d => d.val.entries.length == 400000
       | .error _ => false⟩,
     ⟨"set[int], 200000 items, half repeated (validate_python)", 50, parsed (wideArray 200000), fun j =>
       match ts.validate_python j with

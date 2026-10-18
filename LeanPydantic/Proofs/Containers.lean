@@ -194,8 +194,9 @@ theorem validateMembersFast_eq {α : Type} [FromJson α] (cfg : Cfg) (kvs : List
 /-- A dict validates as `validateMembers` on the collapsed members says. -/
 theorem fromJson_dict_obj {α : Type} [FromJson α] (cfg : Cfg) (kvs : List (String × Json)) :
     fromJson (α := Dict α) cfg (.obj ⟨kvs⟩) = (validateMembers cfg (dedup kvs)).map Dict.ofEntries := by
-  show (validateMembersFast cfg (dedupFast kvs)).map Dict.ofEntries = _
-  rw [validateMembersFast_eq, dedupFast_eq]
+  show (validateMembersFast cfg (dedupFast kvs)).map (Dict.ofChecked _ (dedupIdx_nodup kvs)) = _
+  rw [show Dict.ofChecked (α := α) _ (dedupIdx_nodup kvs) = Dict.ofEntries from funext (Dict.ofChecked_eq _ _),
+    validateMembersFast_eq, dedupFast_eq]
 
 theorem validateMembers_dump {α : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (cfg : Cfg) :
     ∀ kvs : List (String × α),

@@ -21,8 +21,8 @@ Every pass over a dict's members is linear in their number and runs in
 constant stack: duplicates collapse through lean-json's hash index
 (`dedupIdx`, proved equal to `dedup`), members validate in a tail
 loop (`validateMembersFast`, proved equal to `validateMembers`), and the
-keys' distinctness is decided with a hash set (`nodupFast`), never by
-comparing every pair. A body with 100 000 keys is not a denial of service.
+keys' distinctness is known from the collapse (`dedupIdx_nodup`), so the
+validated keys are compared once, in order, with the collapsed ones. A body with 100 000 keys is not a denial of service.
 -/
 
 namespace LeanPydantic
@@ -116,10 +116,26 @@ checked in linear time). -/
 def Dict.ofEntries {α : Type} (kvs : List (String × α)) : Dict α :=
   if h : nodupFast (kvs.map Prod.fst) = true then ⟨kvs, (nodupFast_iff _).1 h⟩ else ⟨[], List.nodup_nil⟩
 
+/-- `Dict.ofEntries` when the keys are known to be `keys`, already distinct:
+then one sequential comparison replaces the hash pass. -/
+def Dict.ofChecked {α : Type} (keys : List String) (hk : keys.Nodup) (kvs : List (String × α)) : Dict α :=
+  if h : kvs.map Prod.fst = keys then ⟨kvs, h ▸ hk⟩ else Dict.ofEntries kvs
+
+theorem Dict.ofChecked_eq {α : Type} (keys : List String) (hk : keys.Nodup) (kvs : List (String × α)) :
+    Dict.ofChecked keys hk kvs = Dict.ofEntries kvs := by
+  unfold Dict.ofChecked
+  split
+  · rename_i h
+    have hn : nodupFast (kvs.map Prod.fst) = true := (nodupFast_iff _).2 (h ▸ hk)
+    simp [Dict.ofEntries, hn]
+  · rfl
+
 instance fromJsonDict {α : Type} [FromJson α] : FromJson (Dict α) where
   title := "dict[str," ++ FromJson.title α ++ "]"
   fromJson cfg
-    | .obj ⟨kvs⟩ => (validateMembersFast cfg (dedupFast kvs)).map Dict.ofEntries
+    | .obj ⟨kvs⟩ =>
+      (validateMembersFast cfg (dedupFast kvs)).map
+        (Dict.ofChecked ((dedupFast kvs).map Prod.fst) (dedupIdx_nodup kvs))
     | j => .error [{ kind := .dictType, input := j, mode := cfg.mode }]
 
 /-- Dump the members. -/

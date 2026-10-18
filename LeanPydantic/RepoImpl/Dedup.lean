@@ -110,3 +110,50 @@ theorem dedupIdx_eq {β : Type} (kvs : List (String × β)) : dedupIdx kvs = ded
   intro k i; simp
 
 end LeanPydantic
+
+namespace LeanPydantic
+
+theorem dictInsert_keys {β : Type} (k : String) (v : β) :
+    ∀ l : List (String × β), ((l.map Prod.fst).Nodup) → ((dictInsert k v l).map Prod.fst).Nodup
+  | [], _ => by simp [dictInsert]
+  | (k', v') :: l, h => by
+    simp only [List.map_cons, List.nodup_cons] at h
+    simp only [dictInsert]
+    split
+    · rename_i he; subst he; simpa using h
+    · rename_i hne
+      simp only [List.map_cons, List.nodup_cons]
+      refine ⟨?_, dictInsert_keys k v l h.2⟩
+      intro hm
+      have : ∀ l' : List (String × β), k' ∈ (dictInsert k v l').map Prod.fst → k' ∈ l'.map Prod.fst := by
+        intro l'
+        induction l' with
+        | nil =>
+          simp only [dictInsert, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil, or_false]
+          exact fun e => absurd e hne
+        | cons a t ih =>
+          simp only [dictInsert]
+          split
+          · simp only [List.map_cons, List.mem_cons]
+            rintro (e | e)
+            · exact absurd e hne
+            · exact .inr e
+          · simp only [List.map_cons, List.mem_cons]
+            rintro (e | e)
+            · exact .inl e
+            · exact .inr (ih e)
+      exact h.1 (this l hm)
+
+/-- A dict's keys are distinct. -/
+theorem dedup_nodup {β : Type} (kvs : List (String × β)) : ((dedup kvs).map Prod.fst).Nodup := by
+  unfold dedup
+  suffices ∀ acc : List (String × β), (acc.map Prod.fst).Nodup →
+      ((kvs.foldl (fun acc kv => dictInsert kv.1 kv.2 acc) acc).map Prod.fst).Nodup from this [] (by simp)
+  induction kvs with
+  | nil => intro acc h; exact h
+  | cons kv kvs ih => intro acc h; exact ih _ (dictInsert_keys kv.1 kv.2 acc h)
+
+theorem dedupIdx_nodup {β : Type} (kvs : List (String × β)) : ((dedupIdx kvs).map Prod.fst).Nodup := by
+  rw [dedupIdx_eq]; exact dedup_nodup kvs
+
+end LeanPydantic

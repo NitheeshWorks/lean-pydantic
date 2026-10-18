@@ -131,9 +131,8 @@ def cleanIntStr (s0 : List Char) : Option (List Char) := do
 counts; see UP-025). -/
 def maxIntLen : Nat := 4300
 
-/-- pydantic-core's `str_as_int`. -/
-def strAsInt (s : String) : Except ErrorKind Int :=
-  let cs := s.toList
+/-- pydantic-core's `str_as_int`, on the characters. -/
+def strAsIntChars (cs : List Char) : Except ErrorKind Int :=
   -- the length is checked before any digit is converted, so an over-long
   -- string is rejected in linear time, as pydantic-core's number parser does
   if isJsonInt cs then
@@ -151,6 +150,44 @@ def strAsInt (s : String) : Except ErrorKind Int :=
         | some i => .ok i
         | none => .error .intParsing
     | none => .error .intParsing
+
+/-- An over-long run of digits not starting with `0`: a JSON integer
+literal past the limit, decided on the string itself in one pass, with no
+list built. -/
+def longDigits (s : String) : Bool :=
+  decide (s.length > maxIntLen) && s.front? != some '0' && s.all isDigit
+
+theorem strAsIntChars_long (s : String) (h : longDigits s = true) :
+    strAsIntChars s.toList = .error .intParsingSize := by
+  simp only [longDigits, Bool.and_eq_true, decide_eq_true_eq, bne_iff_ne, ne_eq,
+    String.all_bool_eq, String.front?_eq] at h
+  obtain ⟨⟨hl, h0⟩, hd⟩ := h
+  have hl' : s.toList.length > maxIntLen := by rw [String.length_toList]; exact hl
+  have hj : isJsonInt s.toList = true := by
+    unfold isJsonInt
+    match hc : s.toList, hl', h0, hd with
+    | [], hl', _, _ => simp at hl'
+    | '-' :: r, _, _, hd => simp [isDigit] at hd
+    | '0' :: _, _, h0, _ => simp at h0
+    | c :: r, _, h0, hd =>
+      split
+      · rename_i heq; cases heq; simp [isDigit] at hd
+      · simp only
+        split
+        · simp_all
+        · rename_i heq; simp_all
+        · exact hd
+  simp only [strAsIntChars, hj, ite_true, hl']
+
+/-- pydantic-core's `str_as_int`. -/
+def strAsInt (s : String) : Except ErrorKind Int :=
+  if longDigits s then .error .intParsingSize else strAsIntChars s.toList
+
+theorem strAsInt_eq (s : String) : strAsInt s = strAsIntChars s.toList := by
+  unfold strAsInt
+  split
+  · rename_i h; exact (strAsIntChars_long s h).symm
+  · rfl
 
 /-- Rust's `f64` grammar: `[+-]? (inf | infinity | nan | digits)`, where
 digits are `D* [. D*] [(e|E) [+-]? D+]` with at least one mantissa digit.
