@@ -346,8 +346,8 @@ def dump_python (_ : TypeAdapter α) (a : α) («include» : Option (List String
   dumpWith a «include» exclude by_alias exclude_unset exclude_defaults exclude_none
 
 /-- `TypeAdapter.dump_json(value, indent=None, by_alias=False)`. -/
-def dump_json (_ : TypeAdapter α) (a : α) (indent : Option Nat := none) (by_alias : Bool := false) : String :=
-  LeanJson.printStr (toJson { by_alias } a) { indent }
+def dump_json (_ : TypeAdapter α) (a : α) (indent : Indent := {}) (by_alias : Bool := false) : String :=
+  LeanJson.printStr (toJson { by_alias } a) { indent := indent.width }
 
 /-- `TypeAdapter.json_schema()`. -/
 def json_schema (_ : TypeAdapter α) : Json := (JsonSchema.schema α).document

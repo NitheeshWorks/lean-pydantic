@@ -42,7 +42,7 @@ structure User where
   deriving Model
 
 #eval match User.model_validate (json% {"id": 123, "signup_ts": "2019-06-01 12:22", "tastes": "9"}) with
-  | .ok user => s!"{user.val.id} {user.val.model_dump_json}"
+  | .ok ⟨user, _⟩ => s!"{user.id} {user.model_dump_json}"
   | .error e => e.json
 -- 123 {"id":123,"name":"John Doe","signup_ts":"2019-06-01 12:22","tastes":9}
 ```
@@ -159,7 +159,8 @@ functional validators and serializers.
 ```
 lake build            # library, proofs, and both test executables
 lake exe props        # property tests (seeded; `lake exe props 42`)
-lake exe conformance  # 584 cases replayed against pydantic's own output
+lake exe conformance  # 6400+ cases replayed against pydantic's own output
+lake exe bench        # hostile sizes, each against a bound
 scripts/check.sh      # the whole CI gate, locally
 ```
 
@@ -167,9 +168,12 @@ Toolchain: `leanprover/lean4:v4.35.0` (pinned in `lean-toolchain`; `elan` instal
 
 ## Status
 
-Milestone 1: scalars, `Option`, constraints, models from flat structures,
-errors, JSON Schema. Next (milestone 2): lists, dicts, nested models, unions,
-aliases, validators, serializers, `datetime`, regex patterns.
+Milestones 1 and 2: scalars (`Int`, `Nat`, `String`, `Bool`, `Float`,
+exact `Decimal`, `PyDecimal`), `Option`, constraints, lists, dicts, sets,
+tuples, nested models, literals and enums, smart unions, aliases, defaults
+and factories, functional validators and serializers, `pattern`, errors and
+the JSON Schema generator. Not yet: `datetime` and the other standard
+library types.
 
 ## License
 

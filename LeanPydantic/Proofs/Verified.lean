@@ -122,6 +122,11 @@ structure VerifiedSurface : Prop where
   excludeUnsetSubset : ∀ (α : Type) [Model α] [LawfulModel α] (a : α) (j : Json),
     ∃ kvs, Model.model_dump a (by_alias := true) (exclude_unset := true) (set_from := some j) = .obj ⟨kvs⟩ ∧
       ∀ p ∈ kvs, Fields.wasSet (some j) p.1 = true
+  /-- The same, in the form users call: a validated model remembers its
+  input, so no `set_from` is passed (`Valid.exclude_unset_subset`). -/
+  validExcludeUnsetSubset : ∀ (α : Type) [Model α] [LawfulModel α] (cfg : Cfg) (obj : Json) (v : Valid α cfg obj),
+    ∃ kvs, v.model_dump (by_alias := true) (exclude_unset := true) = .obj ⟨kvs⟩ ∧
+      ∀ p ∈ kvs, Fields.wasSet (some obj) p.1 = true
   /-- `schema_complete` for scalars: every input their schema allows validates. -/
   completeBool : ∀ cfg, SchemaComplete Bool cfg
   completeString : ∀ cfg, SchemaComplete String cfg
@@ -163,6 +168,7 @@ theorem theVerifiedSurface : VerifiedSurface where
   unionSmartLeftmost _ _ _ _ _ _ cfg j a h hx := union_smart_leftmost cfg j a h hx
   unionSmartStrict _ _ _ _ _ _ cfg j a hn h := union_smart_strict cfg j a hn h
   excludeUnsetSubset _ _ _ a j := Model.exclude_unset_subset a j
+  validExcludeUnsetSubset _ _ _ _ _ v := Valid.exclude_unset_subset v
   completeBool := schema_complete_bool
   completeString := schema_complete_string
   completeFloat := schema_complete_float

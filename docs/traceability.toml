@@ -54,7 +54,7 @@ status = "deviation"
 realises = ["LeanPydantic.Scalar.float", "LeanPydantic.Coerce.strAsFloat"]
 theorem = ["LeanPydantic.float_strict"]
 test = ["tests/Conformance.lean::tableCases", "tests/Props.lean::properties"]
-notes = "Deviation: values are exact decimals, not IEEE doubles, so 0.1 + 0.2 and over-precise or overflowing literals (1e400) keep their exact value where pydantic rounds or gives inf. NaN and infinities (lenient JSON, 'inf' strings) are finite_number, as FiniteFloat. Plain float (allow_inf_nan=True) is not provided yet."
+notes = "Deviation: values are exact decimals, not IEEE doubles, so 0.1 + 0.2 and over-precise or overflowing literals (1e400) keep their exact value where pydantic rounds or gives inf. NaN and infinities (lenient JSON, 'inf' strings) are finite_number, as FiniteFloat. Plain float is Float (IEEE binary64, row float.python)."
 
 [[requirement]]
 id = "validate.bool"
@@ -335,7 +335,7 @@ notes = "A validator may reject or rewrite what its type dumps, so there is no r
 id = "decimal.digits"
 upstream = "pydantic-core/tests/validators/test_decimal.py::test_decimal_digits"
 title = "Decimal: str/int/float inputs as pydantic-core reads them, max_digits/decimal_places/whole digits, str dump"
-status = "tested"
+status = "deviation"
 realises = ["LeanPydantic.PyDecimal", "LeanPydantic.Condecimal", "LeanPydantic.PyDecimal.parse", "LeanPydantic.PyDecimal.toPy", "LeanPydantic.PyDecimal.checkDigits"]
 test = ["tests/Conformance.lean::tableCases", "tests/Props.lean::properties"]
 notes = "Deviation: only ASCII digits are read in strings, and normalize() does not round to 28 digits."
@@ -398,3 +398,13 @@ theorem = ["LeanPydantic.dedupIdx_eq", "LeanPydantic.nodupFast_iff", "LeanPydant
   "LeanPydantic.Dec.ltCore_iff", "LeanPydantic.Dec.dvdCore_iff", "LeanPydantic.Num.lt_iff_core"]
 test = ["tests/Bench.lean::benches", "tests/Props.lean::properties"]
 notes = "Bounds in tests/Bench.lean against pydantic-core 2.14.1 on the same machine; run by check.sh and CI."
+
+[[requirement]]
+id = "decimal.multiple-of-exact"
+upstream = "pydantic-core/tests/validators/test_decimal.py::test_decimal_multiple_of"
+title = "multiple_of on a Decimal is exact; Python divides at 28 digits and rejects wider quotients (UP-055, pydantic#13970)"
+status = "deviation"
+realises = ["LeanPydantic.Dec.IsMultiple", "LeanPydantic.Dec.dvdCore"]
+theorem = ["LeanPydantic.Dec.isMultiple_iff_core", "LeanPydantic.Dec.dvdCore_iff"]
+test = ["tests/Conformance.lean::handCases"]
+notes = "pydantic-core computes (value / multiple_of) % 1 in the default 28-digit context, so Decimal('1e28') fails multiple_of=0.5 (https://github.com/pydantic/pydantic/issues/13970). Here divisibility is exact. The three inputs this changes (123456789012345678901234567890e5, 1e300, \"1e999999999\") are left out of the generated table and pinned to Lean's answer by a hand case."

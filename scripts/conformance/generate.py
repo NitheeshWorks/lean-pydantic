@@ -107,6 +107,11 @@ TYPES = {
 }
 
 PC = 'pydantic-core/tests/validators/'
+_D = '7' * 4301
+_E = '7' * 4300
+LONG_INT_FORMS = [_D, _D + '.0', _D + '.00', '-' + _D + '.0', ' ' + _D, '000' + _D, '+' + _D, '7_' + _D,
+    '-' + _E, '-' + _E[1:], _D + ' ', _D + 'x', '0' + _D, '-0' + _D, _E + '.0', '000' + _E, ' ' + _E + ' ', '+' + _E,
+    '7_' + _E[1:], _E[:10] + '_' + _E[10:], _D[:10] + '_' + _D[10:], '0' * 4301 + '1', '0' * 4301 + '.0']
 INT_IN = ['0', '1', '-1', '42', '"42"', '" 42 "', '"+5"', '"-0"', '"01"', '"09"', '"00_"', '"0:"',
     '"+4_2"', '"+0_42"', '"+4_2.0"', '"+04_2.0"', '"++4_2"', '"-+1"', '"+-1"', '"--0001"', '"-+0001"',
     '"-0-001"', '"-0+001"', '"-00001"', '"-00042_000"', '"4_2"', '"0_42"', '"4_2.0"', '"04_2.0"',
@@ -156,6 +161,9 @@ SHOP_IN = ['{"name":"x","images":[{"url":1},{"name":"a","url":"u"},5],"itemId":"
 
 ROWS = [
     ('int', INT_IN, PC + 'test_int.py::test_int_py_and_json'),
+    # over-long strings, every form: jiter's leading-literal limit is int_parsing_size,
+    # the cleaned forms' is int_parsing
+    ('int', ['"' + f + '"' for f in LONG_INT_FORMS], PC + 'test_int.py::test_long_int'),
     ('nat', NAT_IN, 'pydantic/tests/test_types.py::test_strict_raw_type'),
     ('float', FLOAT_IN, PC + 'test_float.py::test_non_finite_json_values'),
     ('bool', BOOL_IN, PC + 'test_bool.py::test_bool'),

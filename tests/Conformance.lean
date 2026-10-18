@@ -320,6 +320,21 @@ def handCases : List Case := [
         <&&> check "{\"price\":2.5,\"q\":null,\"item_id\":3}" (p.model_dump_json (exclude_unset := true))
         <&&> check "[price, q, item_id]" (toString p.model_fields_set)
       | _, _ => pure false },
+  { upstream := "pydantic-core/tests/validators/test_decimal.py::test_decimal_multiple_of"
+    name := "UP-055 deviation: Decimal multiple_of is exact past 28 digits"
+    run := do
+      -- Python divides at 28 digits and reports multiple_of on all three
+      -- (pydantic#13970); each value here is a multiple of 0.5, so the first
+      -- failing check is le 10
+      let ta := TypeAdapter.new (Condecimal none (some 1) ∣ multipleOf 0.5 ∧ le 10)
+      let types := ["123456789012345678901234567890e5", "1e300", "\"1e999999999\""].map fun s =>
+        match ta.validate_json s with
+        | .ok _ => "ok"
+        | .error e => String.intercalate "," (e.errors.map fun (j : LeanJson.Json) =>
+            match j.getObjVal? "type" with
+            | some (.str t) => t
+            | _ => "?")
+      check "[less_than_equal, less_than_equal, less_than_equal]" (toString types) },
   { upstream := "pydantic/tests/test_main.py::test_ultra_simple_failed"
     name := "errors without url, context, input"
     run := do

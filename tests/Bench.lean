@@ -14,7 +14,8 @@ The bounds are set against pydantic-core 2.14.1 on the same machine
 | input | pydantic-core | here | bound |
 |---|---|---|---|
 | 65000 digits, JSON number or string | 0.1 ms | 3-5 ms | 50 ms |
-| 1 MiB digit string | - | 8 ms | 100 ms |
+| 1 MiB digit string | - | 6 ms | 100 ms |
+| 1 MiB digits with `.0`, `.00`, `-`, ` `, `000`, `+`, `7_` | 2.6-2.9 ms | 6-7 ms | 30 ms |
 | dict, 100 000 keys, `validate_json` | 25.5 ms | 78 ms | 150 ms |
 | dict, 200 000 keys + 1000 repeats, `validate_json` | 80.7 ms | 236 ms | 450 ms |
 | set, 200 000 items, `validate_json` | 13.2 ms | 69 ms | 150 ms |
@@ -107,6 +108,16 @@ def benches : List Bench :=
     ⟨"int, 65000-digit JSON number (validate_json)", 50, digits 65000, fun s => rejects (ti.validate_json s)⟩,
     ⟨"int, 65000-digit string, lax (validate_json)", 50, "\"" ++ digits 65000 ++ "\"", fun s => rejects (ti.validate_json s)⟩,
     ⟨"int, 1 MiB digit string, lax (validate_python)", 100, digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,
+    -- every form the cleaning accepts, at 1 MiB: one pass, no list built
+    ⟨"int, 1 MiB digits + \".0\"", 30, digits 1048576 ++ ".0", fun s => rejects (ti.validate_python (.str s))⟩,
+    ⟨"int, 1 MiB digits + \".00\"", 30, digits 1048576 ++ ".00", fun s => rejects (ti.validate_python (.str s))⟩,
+    ⟨"int, \"-\" + 1 MiB digits + \".0\"", 30, "-" ++ digits 1048576 ++ ".0", fun s => rejects (ti.validate_python (.str s))⟩,
+    ⟨"int, \"-\" + 1 MiB digits", 30, "-" ++ digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,
+    ⟨"int, \" \" + 1 MiB digits", 30, " " ++ digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,
+    ⟨"int, \"000\" + 1 MiB digits", 30, "000" ++ digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,
+    ⟨"int, \"+\" + 1 MiB digits", 30, "+" ++ digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,
+    ⟨"int, \"7_\" + 1 MiB digits", 30, "7_" ++ digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,
+    ⟨"int, 1 MiB digits + \" \"", 30, digits 1048576 ++ " ", fun s => rejects (ti.validate_python (.str s))⟩,
     ⟨"int, 4300-digit string, lax (validate_python)", 50, digits 4300, fun s =>
       match ti.validate_python (.str s) with
       | .ok _ => true
