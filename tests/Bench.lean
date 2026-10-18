@@ -26,6 +26,16 @@ The bounds are set against pydantic-core 2.14.1 on the same machine
 | set, 200 000 items, parsed | 6.2 ms | 22-24 ms | 50 ms |
 | `^(a{1,50})+$`, 10 000 / 20 000 characters | 0.03 / 0.06 ms | 94 / 94 ms | 300 ms |
 | `(a\|b)` ×50 then `c`, 50 000 / 100 000 characters | 0.15 / 0.33 ms | 24 / 27 ms | 100 ms |
+| `float` from a 1 MiB digit string (also `+ ".5e-3"`) | 0.21-0.22 ms | 97-123 ms | 1000 ms |
+| `Decimal` from a 1 MiB digit string (also `+ ".5"`) | 3.6 ms | 97-100 ms | 1000 ms |
+
+The 1 MiB `float` and `Decimal` rows are read in place (`NumScan.numScan`,
+one `String.foldl` into 16-digit chunks, 14 ms) and the chunks combined by a
+product tree into the exact coefficient (84 ms). Both keep the exact value,
+so the binary conversion is the floor: pydantic-core's `float` reads the
+digits into a rounded double (about 440x faster here) and Python's
+`Decimal` keeps base-10 limbs (about 27x). Within 2x is not feasible without
+dropping exactness; the ratios are recorded instead.
 
 Of `validate_json`'s time on the dict, 50 ms of 78 is lean-json's parser.
 Neither side is exactly linear past 100 000 keys: pydantic-core's own times
@@ -37,6 +47,10 @@ with a hash index.
 
 The pattern rows run compiled patterns (`Regex.ofSource`: derivative terms
 numbered once, tables of linear forms, steps cached per call by term set).
+Every pattern has a passing and a failing row; a failing email-like match
+(no `@`, a one-letter TLD, an upper-case tail, a 65-character local part)
+costs no more than a passing one (0.02-0.04 ms per call, both under the
+0.1 ms bound; pydantic-core 0.5 us passing, 0.9-1.0 us failing).
 pydantic-core (Rust `regex`): the email-like pattern 0.001 ms per call,
 `^(a{1,50})+$` on 1000 characters 0.003 ms, `[ab]*a[ab]{100}c` on 20 000
 random characters 22 ms, `(\w{1,10}\s?){1,10}x` 0.058 ms per call.
@@ -75,6 +89,8 @@ def widePat : Keel.Pattern := Regex.ofSource "(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b
 def emailPat : Keel.Pattern := Regex.ofSource "^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,255}\\.[a-z]{2,63}$"
 def thrashPat : Keel.Pattern := Regex.ofSource "[ab]*a[ab]{100}c"
 def wordsPat : Keel.Pattern := Regex.ofSource "(\\w{1,10}\\s?){1,10}x"
+/-- Over Rust's compiled-size limit (pydantic: `SchemaError`), accepted here. -/
+def bigWordsPat : Keel.Pattern := Regex.ofSource "(\\w{1,30}\\s?){1,20}x"
 
 /-- A parsed JSON value (`null` if the text does not parse). -/
 def parsed (s : String) : LeanJson.Json :=
@@ -110,6 +126,8 @@ def benches : List Bench :=
   let tpd := TypeAdapter.new (PyDecimal ∣ gt 0)
   let digits (n : Nat) : String := String.ofList (List.replicate n '7')
   let rejects {α} (r : Except ValidationError α) : Bool := match r with | .ok _ => false | .error _ => true
+  let accepts {α} (r : Except ValidationError α) : Bool := !rejects r
+  let tf := TypeAdapter.new Float
   let counted := countedPat.test
   let wide := widePat.test
   let email := emailPat.test
@@ -121,13 +139,30 @@ def benches : List Bench :=
     let tag := toString (10000 + i)
     "first.last+" ++ tag ++ String.ofList (List.replicate 24 'x') ++ "@mail.example-domain.com"
   let runs := (List.range 1000).map fun i => as (995 + i % 10)
+  -- the same addresses, failing: no `@`, a one-letter top-level domain, an
+  -- upper-case letter at the end, a local part of 65 characters
+  let noAt := emails.map fun e => e.replace "@" "#"
+  let badTld := emails.map fun e => (e.dropEnd 3).toString ++ "c"
+  let upper := emails.map fun e => e ++ "M"
+  let longLocal := (List.range 1000).map fun i =>
+    String.ofList (List.replicate 60 'y') ++ toString (10000 + i) ++ "@mail.example-domain.com"
   [⟨"pattern email-like, 1000 calls on 64 characters (0.1 ms per call)", 100, emails, fun l => l.all email⟩,
+    ⟨"pattern email-like, failing (no @), 1000 calls (0.1 ms per call)", 100, noAt, fun l => !l.any email⟩,
+    ⟨"pattern email-like, failing (one-letter TLD), 1000 calls (0.1 ms per call)", 100, badTld, fun l => !l.any email⟩,
+    ⟨"pattern email-like, failing (upper case at the end), 1000 calls (0.1 ms per call)", 100, upper, fun l => !l.any email⟩,
+    ⟨"pattern email-like, failing (65-character local part), 1000 calls (0.1 ms per call)", 100, longLocal, fun l => !l.any email⟩,
     ⟨"pattern ^(a{1,50})+$, 1000 calls on 995-1004 characters (1 ms per call)", 1000, runs, fun l => l.all counted⟩,
+    ⟨"pattern ^(a{1,50})+$, failing (b at the end), 1000 calls (1 ms per call)", 1000, runs.map (· ++ "b"), fun l => !l.any counted⟩,
     ⟨"pattern [ab]*a[ab]{100}c on 10 000 random a/b", 150, randomAB 10000, fun s => !thrash s⟩,
     ⟨"pattern [ab]*a[ab]{100}c on 20 000 random a/b", 200, randomAB 20000, fun s => !thrash s⟩,
     ⟨"pattern ^(a{1,50})+$ on 20 000 characters", 50, as 20000, fun s => counted s⟩,
     ⟨"pattern (a|b) x50 then c on 100 000 characters", 50, abs 100000, fun s => !wide s⟩,
+    ⟨"pattern (a|b) x50 then c on 100 000 characters, passing (c at the end)", 50, abs 100000 ++ "c", fun s => wide s⟩,
+    ⟨"pattern [ab]*a[ab]{100}c on 20 000 random a/b, passing (c at the end)", 200, randomAB 20000 ++ "a" ++ String.ofList (List.replicate 100 'b') ++ "c", fun s => thrash s⟩,
     ⟨"pattern (\\w{1,10}\\s?){1,10}x, 1000 calls on 30 characters", 200, (List.range 1000).map (fun i => "word" ++ toString (100000 + i) ++ " another phrase here"), fun l => l.all fun s => !wordsPat.test s⟩,
+    ⟨"pattern (\\w{1,10}\\s?){1,10}x, 1000 calls on 31 characters, passing (x at the end)", 200, (List.range 1000).map (fun i => "word" ++ toString (100000 + i) ++ " another phrase herex"), fun l => l.all fun s => wordsPat.test s⟩,
+    ⟨"pattern (\\w{1,30}\\s?){1,20}x, 100 calls on 30 characters", 100, (List.range 100).map (fun i => "word" ++ toString (100000 + i) ++ " another phrase here"), fun l => l.all fun s => !bigWordsPat.test s⟩,
+    ⟨"pattern (\\w{1,30}\\s?){1,20}x, 100 calls on 31 characters, passing (x at the end)", 100, (List.range 100).map (fun i => "word" ++ toString (100000 + i) ++ " another phrase herex"), fun l => l.all fun s => bigWordsPat.test s⟩,
     ⟨"compile (\\w{1,30}\\s?){1,20}x", 2000, "(\\w{1,30}\\s?){1,20}x", fun src =>
       match Regex.compile src with
       | .ok r => (Regex.Regex.Nfa.build r).isSome
@@ -149,6 +184,11 @@ def benches : List Bench :=
     ⟨"int, \"+\" + 1 MiB digits", 30, "+" ++ digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,
     ⟨"int, \"7_\" + 1 MiB digits", 30, "7_" ++ digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,
     ⟨"int, 1 MiB digits + \" \"", 30, digits 1048576 ++ " ", fun s => rejects (ti.validate_python (.str s))⟩,
+    -- float and Decimal from a long string: read in place (NumScan), then one product tree
+    ⟨"float, 1 MiB digit string, lax (validate_python)", 1000, digits 1048576, fun s => accepts (tf.validate_python (.str s))⟩,
+    ⟨"float, 1 MiB digits + \".5e-3\", lax (validate_python)", 1000, digits 1048576 ++ ".5e-3", fun s => accepts (tf.validate_python (.str s))⟩,
+    ⟨"Decimal, 1 MiB digit string (validate_python)", 1000, digits 1048576, fun s => accepts (tpd.validate_python (.str s))⟩,
+    ⟨"Decimal, 1 MiB digits + \".5\" (validate_python)", 1000, digits 1048576 ++ ".5", fun s => accepts (tpd.validate_python (.str s))⟩,
     ⟨"int, 4300-digit string, lax (validate_python)", 50, digits 4300, fun s =>
       match ti.validate_python (.str s) with
       | .ok _ => true

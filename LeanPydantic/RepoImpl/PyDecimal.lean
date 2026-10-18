@@ -130,36 +130,150 @@ def isNonFinite (cs : List Char) : Bool :=
   let payload (p : String) := low.startsWith p && (low.drop p.length).all Char.isDigit
   low = "inf" || low = "infinity" || payload "nan" || payload "snan"
 
+/-- After the integer digits: a point and the fraction's digits. -/
+def fracRun : List Char → List Char × List Char
+  | '.' :: r' => digitRun r'
+  | r => ([], r)
+
+/-- After the mantissa: an exponent (and what follows it), or nothing. -/
+def expRun : List Char → Option (Int × List Char)
+  | c :: r' =>
+    if c = 'e' || c = 'E' then
+      let (eneg, r'') := NumScan.splitSign r'
+      let (eds, rest) := digitRun r''
+      if eds.isEmpty then none
+      else some ((if eneg then -(digitsValue eds : Int) else digitsValue eds), rest)
+    else some (0, c :: r')
+  | [] => some (0, [])
+
 /-- Python's `Decimal(s)` on a string: surrounding white space stripped,
 and every underscore dropped (CPython's `decimal` accepts `1_000`, and also
 `_1` and `1__0`). -/
-def parse (s : String) : Parsed :=
-  let cs := ((s.toList.dropWhile Regex.isSpace).reverse.dropWhile Regex.isSpace).reverse.filter (· ≠ '_')
-  let (neg, cs) := match cs with
-    | '-' :: r => (true, r)
-    | '+' :: r => (false, r)
-    | r => (false, r)
+def parseChars (cs0 : List Char) : Parsed :=
+  let cs := ((cs0.dropWhile Regex.isSpace).reverse.dropWhile Regex.isSpace).reverse.filter (· ≠ '_')
+  let (neg, cs) := NumScan.splitSign cs
   if isNonFinite cs then .nonFinite else
   let (ip, r) := digitRun cs
-  let (fp, r) := match r with
-    | '.' :: r' => digitRun r'
-    | r => ([], r)
+  let (fp, r) := fracRun r
   if ip.isEmpty && fp.isEmpty then .invalid else
-  let ex : Option (Int × List Char) := match r with
-    | c :: r' =>
-      if c = 'e' || c = 'E' then
-        let (eneg, r'') := match r' with
-          | '-' :: x => (true, x)
-          | '+' :: x => (false, x)
-          | x => (false, x)
-        let (eds, rest) := digitRun r''
-        if eds.isEmpty then none
-        else some ((if eneg then -(digitsValue eds : Int) else digitsValue eds), rest)
-      else some (0, c :: r')
-    | [] => some (0, [])
-  match ex with
+  match expRun r with
   | some (e, []) => .finite ⟨neg, digitsValue (ip ++ fp), e - fp.length⟩
   | _ => .invalid
+
+/-- Python's `Decimal(s)` on a string: a plain number is read in place
+(`NumScan.numScan`), anything else on the characters (`parse_eq`). -/
+def parse (s : String) : Parsed :=
+  match NumScan.numScan s with
+  | some p => .finite ⟨p.neg, p.mant, p.exp - p.frac⟩
+  | none => parseChars s.toList
+
+theorem digitRun_eq (l : List Char) :
+    digitRun l = (l.takeWhile NumScan.isDigit, l.dropWhile NumScan.isDigit) := by
+  induction l with
+  | nil => rfl
+  | cons c l ih =>
+    unfold digitRun
+    rw [NumScan.isDigit_eq_isDigit] at *
+    cases h : NumScan.isDigit c <;> simp [h, ih]
+
+theorem dropWhile_allowed {p : Char → Bool} {l : List Char} (hp : ∀ c ∈ NumScan.allowed, p c = false)
+    (h : ∀ c ∈ l, c ∈ NumScan.allowed) : l.dropWhile p = l := by
+  cases l with
+  | nil => rfl
+  | cons c l => simp [hp c (h c (by simp))]
+
+theorem isNonFinite_false {c : Char} {t : List Char} (hc : NumScan.isDigit c = true ∨ c = '.') :
+    isNonFinite (c :: t) = false := by
+  have hm : c ∈ NumScan.allowed := by
+    rcases hc with hc | hc
+    · exact NumScan.isDigit_mem hc
+    · subst hc; decide
+  have hl : ∀ x ∈ NumScan.allowed, x.toLower ≠ 'i' ∧ x.toLower ≠ 'n' ∧ x.toLower ≠ 's' := by decide
+  obtain ⟨h1, h2, h3⟩ := hl c hm
+  unfold isNonFinite
+  simp only [Coerce.low_ne hc "inf" (by decide), Coerce.low_ne hc "infinity" (by decide),
+    decide_false, Bool.false_or]
+  simp [String.toList_ofList, Ne.symm h2, Ne.symm h3]
+
+theorem fracRun_eq (r : List Char) : fracRun r = NumScan.fracSplit r := by
+  unfold fracRun NumScan.fracSplit
+  split <;> simp_all [digitRun_eq, NumScan.span_eq]
+
+theorem takeWhile_all {p : Char → Bool} {l : List Char} (h : l.all p = true) : l.takeWhile p = l := by
+  induction l with
+  | nil => rfl
+  | cons c l ih => simp_all
+
+theorem dropWhile_all {p : Char → Bool} {l : List Char} (h : l.all p = true) : l.dropWhile p = [] := by
+  induction l with
+  | nil => rfl
+  | cons c l ih => simp_all
+
+theorem expRun_of_expPart {r : List Char} {e : Int} (h : NumScan.expPart r = some e) :
+    expRun r = some (e, []) := by
+  cases r with
+  | nil => simp_all [NumScan.expPart, expRun]
+  | cons x r =>
+    unfold NumScan.expPart at h
+    by_cases hx : x = 'e' ∨ x = 'E'
+    · simp only [hx, ↓reduceIte] at h
+      have hx' : (decide (x = 'e') || decide (x = 'E')) = true := by
+        rcases hx with hx | hx <;> simp [hx]
+      unfold NumScan.expDigits at h
+      unfold expRun
+      simp only [hx', ↓reduceIte]
+      generalize NumScan.splitSign r = SG at h ⊢
+      rcases SG with ⟨eneg, ds⟩
+      dsimp only at h ⊢
+      by_cases hd : ds ≠ [] ∧ ds.all NumScan.isDigit = true
+      · simp only [eq_true hd, ↓reduceIte, Option.some.injEq] at h
+        have h1 : ds.takeWhile NumScan.isDigit = ds := takeWhile_all hd.2
+        have h2 : ds.dropWhile NumScan.isDigit = [] := dropWhile_all hd.2
+        rw [digitRun_eq, h1, h2]
+        have hne : ds.isEmpty = false := by simpa using hd.1
+        simp [hne, digitsValue, ← h]
+      · simp only [eq_false hd, ↓reduceIte, reduceCtorEq] at h
+    · simp [hx] at h
+
+theorem parse_eq (s : String) : parse s = parseChars s.toList := by
+  unfold parse
+  split
+  · rename_i p h
+    have hp : NumScan.numParts s.toList = some p := NumScan.numScan_eq s ▸ h
+    have hall := NumScan.numScan_allowed h
+    generalize s.toList = l at hp hall ⊢
+    have hsp : ∀ c ∈ NumScan.allowed, Regex.isSpace c = false := by decide
+    have ht : ((l.dropWhile Regex.isSpace).reverse.dropWhile Regex.isSpace).reverse = l := by
+      rw [dropWhile_allowed hsp hall, dropWhile_allowed hsp (by simpa using hall),
+        List.reverse_reverse]
+    have hf : l.filter (· ≠ '_') = l := by
+      rw [List.filter_eq_self]
+      intro c hc
+      have : ∀ x ∈ NumScan.allowed, x ≠ '_' := by decide
+      simpa using this c (hall c hc)
+    unfold parseChars
+    simp only [ht, hf]
+    unfold NumScan.numParts at hp
+    generalize NumScan.splitSign l = SG at hp ⊢
+    rcases SG with ⟨neg, r⟩
+    obtain ⟨c, t, rfl, hc⟩ := NumScan.afterSign_head hp
+    simp only [isNonFinite_false hc, Bool.false_eq_true, ↓reduceIte, digitRun_eq, fracRun_eq]
+    unfold NumScan.afterSign at hp
+    simp only [NumScan.span_eq] at hp
+    generalize (c :: t).takeWhile NumScan.isDigit = ip at hp ⊢
+    generalize (c :: t).dropWhile NumScan.isDigit = R at hp ⊢
+    generalize NumScan.fracSplit R = B at hp ⊢
+    rcases B with ⟨fp, R2⟩
+    dsimp only at hp ⊢
+    by_cases hcond : ip.isEmpty = true ∧ fp.isEmpty = true
+    · simp [hcond] at hp
+    · simp only [hcond, ↓reduceIte, Option.map_eq_some_iff] at hp
+      obtain ⟨e, he, rfl⟩ := hp
+      have h2 : (ip.isEmpty && fp.isEmpty) = false := by
+        simpa [Bool.and_eq_true] using hcond
+      simp only [h2, Bool.false_eq_true, ↓reduceIte, expRun_of_expPart he]
+      rfl
+  · rfl
 
 /-- `as_tuple()`'s digit count and decimal places, as pydantic-core counts
 them: a positive exponent adds trailing zeros, and places beyond the digits

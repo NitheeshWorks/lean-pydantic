@@ -51,3 +51,39 @@ for name, pat, text in [('^(a{1,50})+$, 10 000', r'^(a{1,50})+$', 'a' * 10000),
         except Exception:
             pass
     print(f'pattern {name}: {best(run, text):.2f} ms')
+
+# float and Decimal from a 1 MiB string (Lean: validate_python on the string)
+from decimal import Decimal
+digits = '7' * 1048576
+for name, ta, text in [('float, 1 MiB digit string', TypeAdapter(float), digits),
+                       ('float, 1 MiB digits + ".5e-3"', TypeAdapter(float), digits + '.5e-3'),
+                       ('Decimal, 1 MiB digit string', TypeAdapter(Decimal), digits),
+                       ('Decimal, 1 MiB digits + ".5"', TypeAdapter(Decimal), digits + '.5')]:
+    print(f'{name}: {best(ta.validate_python, text):.2f} ms')
+
+# pattern calls, passing and failing (Lean: the same inputs in tests/Bench.lean)
+def per_call(pat, texts):
+    ta = TypeAdapter(Annotated[str, Field(pattern=pat)])
+    def run(ts):
+        for t in ts:
+            try:
+                ta.validate_python(t)
+            except Exception:
+                pass
+    return best(run, texts) / len(texts)
+
+email = r'^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,255}\.[a-z]{2,63}$'
+emails = ['first.last+' + str(10000 + i) + 'x' * 24 + '@mail.example-domain.com' for i in range(1000)]
+runs = ['a' * (995 + i % 10) for i in range(1000)]
+words = ['word' + str(100000 + i) + ' another phrase here' for i in range(1000)]
+for name, pat, texts in [
+        ('email-like, passing', email, emails),
+        ('email-like, failing (no @)', email, [e.replace('@', '#') for e in emails]),
+        ('email-like, failing (one-letter TLD)', email, [e[:-3] + 'c' for e in emails]),
+        ('email-like, failing (upper case at the end)', email, [e + 'M' for e in emails]),
+        ('email-like, failing (65-character local part)', email, ['y' * 60 + str(10000 + i) + '@mail.example-domain.com' for i in range(1000)]),
+        ('^(a{1,50})+$, passing', r'^(a{1,50})+$', runs),
+        ('^(a{1,50})+$, failing (b at the end)', r'^(a{1,50})+$', [r + 'b' for r in runs]),
+        ('(\\w{1,10}\\s?){1,10}x, failing', r'(\w{1,10}\s?){1,10}x', words),
+        ('(\\w{1,10}\\s?){1,10}x, passing', r'(\w{1,10}\s?){1,10}x', [w + 'x' for w in words])]:
+    print(f'pattern {name}: {per_call(pat, texts) * 1000:.2f} us per call')

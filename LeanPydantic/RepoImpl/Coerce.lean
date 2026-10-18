@@ -1,4 +1,5 @@
 import LeanPydantic.RepoImpl.Number
+import LeanPydantic.RepoImpl.NumScan
 
 /-!
 # RepoImpl: lax-mode coercions
@@ -38,22 +39,9 @@ def isWhitespace (c : Char) : Bool :=
 def trim (cs : List Char) : List Char :=
   ((cs.dropWhile isWhitespace).reverse.dropWhile isWhitespace).reverse
 
-def isDigit (c : Char) : Bool := '0' ≤ c && c ≤ '9'
-
-/-- The digits `ds[lo:hi]` as a number, split in halves so that a long run
-costs a few big multiplications (`O(M(n) log n)`), not `n` of them; the
-recursion is `log n` deep. -/
-def digitsValIn (ds : Array Char) (lo hi : Nat) : Nat :=
-  if h : hi - lo ≤ 32 then
-    (List.range (hi - lo)).foldl (fun a i => a * 10 + ((ds.getD (lo + i) '0').toNat - '0'.toNat)) 0
-  else
-    let mid := (lo + hi) / 2
-    digitsValIn ds lo mid * 10 ^ (hi - mid) + digitsValIn ds mid hi
-termination_by hi - lo
-
-/-- The value of a list of decimal digits. -/
-def digitsVal (cs : List Char) : Nat :=
-  digitsValIn cs.toArray 0 cs.length
+-- An ASCII digit, and the value of a list of digits: `NumScan`'s, a
+-- product tree that `NumScan.digitsVal_eq` proves equal to the digit fold.
+export NumScan (isDigit digitsVal)
 
 
 /-- Whether the characters are a JSON integer literal, without converting. -/
@@ -611,32 +599,157 @@ def rustFloat? (cs : List Char) : Option (Option Decimal) :=
           else none
       ex.map fun e => some (Decimal.normalize neg (digitsVal (ip ++ fp)) (e - fp.length))
 
-/-- pydantic-core's `str_as_float`, for an exact `float`. -/
-def strAsFloat (s : String) : Except ErrorKind Decimal :=
-  let res := match rustFloat? (trim s.toList) with
+/-- pydantic-core's `str_as_float`, for an exact `float`, on the characters. -/
+def strAsFloatChars (cs : List Char) : Except ErrorKind Decimal :=
+  let res := match rustFloat? (trim cs) with
     | some r => some r
-    | none => stripUnderscores s.toList >>= rustFloat?
+    | none => stripUnderscores cs >>= rustFloat?
   match res with
   | some (some d) => .ok d
   | some none => .error .finiteNumber
   | none => .error .floatParsing
 
-/-- pydantic-core's `str_as_float` for a plain `float` (`allow_inf_nan=True`):
-the number, `NaN` and the infinities included. -/
-def strAsNumber (s : String) : Except ErrorKind Number :=
+/-- pydantic-core's `str_as_float` for a plain `float` (`allow_inf_nan=True`),
+on the characters: the number, `NaN` and the infinities included. -/
+def strAsNumberChars (cs : List Char) : Except ErrorKind Number :=
   let classify (cs : List Char) (r : Option (Option Decimal)) : Option Number :=
     r.map fun
       | some d => .float d
       | none =>
         let low := String.ofList (cs.map Char.toLower)
         if low.endsWith "nan" then .nan else if cs.head? = some '-' then .negInf else .inf
-  let t := trim s.toList
+  let t := trim cs
   let res := match classify t (rustFloat? t) with
     | some r => some r
-    | none => stripUnderscores s.toList >>= fun u => classify u (rustFloat? u)
+    | none => stripUnderscores cs >>= fun u => classify u (rustFloat? u)
   match res with
   | some n => .ok n
   | none => .error .floatParsing
+
+/-- A scanned number as an exact decimal. -/
+def partsDecimal (p : NumScan.Parts) : Decimal := Decimal.normalize p.neg p.mant (p.exp - p.frac)
+
+/-- pydantic-core's `str_as_float`, for an exact `float`: a plain number is
+read in place (`NumScan.numScan`), anything else on the characters
+(`strAsFloat_eq`). -/
+def strAsFloat (s : String) : Except ErrorKind Decimal :=
+  match NumScan.numScan s with
+  | some p => .ok (partsDecimal p)
+  | none => strAsFloatChars s.toList
+
+/-- pydantic-core's `str_as_float` for a plain `float` (`allow_inf_nan=True`):
+a plain number in place, anything else on the characters
+(`strAsNumber_eq`). -/
+def strAsNumber (s : String) : Except ErrorKind Number :=
+  match NumScan.numScan s with
+  | some p => .ok (.float (partsDecimal p))
+  | none => strAsNumberChars s.toList
+
+theorem dropWhile_none {p : Char → Bool} {l : List Char} (h : ∀ c ∈ l, p c = false) :
+    l.dropWhile p = l := by
+  cases l with
+  | nil => rfl
+  | cons c l => simp [h c (by simp)]
+
+theorem trim_allowed {l : List Char} (h : ∀ c ∈ l, c ∈ NumScan.allowed) : trim l = l := by
+  have hw : ∀ c ∈ l, isWhitespace c = false := by
+    intro c hc
+    have : ∀ x ∈ NumScan.allowed, isWhitespace x = false := by decide
+    exact this c (h c hc)
+  unfold trim
+  rw [dropWhile_none hw, dropWhile_none (by simpa using hw), List.reverse_reverse]
+
+/-- The characters after the sign that `rustFloat?` reads as `inf` or `nan`
+are never a number's. -/
+theorem low_ne {c : Char} {t : List Char} (hc : NumScan.isDigit c = true ∨ c = '.') (w : String)
+    (hw : w.toList.head? = some 'i' ∨ w.toList.head? = some 'n') :
+    String.ofList ((c :: t).map Char.toLower) ≠ w := by
+  intro h
+  have hm : c ∈ NumScan.allowed := by
+    rcases hc with hc | hc
+    · exact NumScan.isDigit_mem hc
+    · subst hc; decide
+  have hl : ∀ x ∈ NumScan.allowed, x.toLower ≠ 'i' ∧ x.toLower ≠ 'n' := by decide
+  have := congrArg (fun s => s.toList.head?) h
+  simp only [String.toList_ofList, List.map_cons, List.head?_cons] at this
+  rw [← this] at hw
+  rcases hw with hw | hw <;> simp at hw
+  · exact (hl c hm).1 hw
+  · exact (hl c hm).2 hw
+
+/-- On a number, `rustFloat?` is `numParts`. -/
+theorem rustFloat?_of_numParts {cs : List Char} {p : NumScan.Parts}
+    (h : NumScan.numParts cs = some p) : rustFloat? cs = some (some (partsDecimal p)) := by
+  suffices key : ∀ neg r, NumScan.afterSign neg r = some p →
+      (let low := String.ofList (r.map Char.toLower)
+      if low = "inf" ∨ low = "infinity" ∨ low = "nan" then some none
+      else
+        let (ip, r) := r.span isDigit
+        let (fp, r) := match r with
+          | '.' :: r' => r'.span isDigit
+          | r' => ([], r')
+        if ip.isEmpty ∧ fp.isEmpty then none
+        else
+          let ex : Option Int := match r with
+            | [] => some 0
+            | e :: r' =>
+              if e = 'e' ∨ e = 'E' then
+                let (eneg, ds) := match r' with
+                  | '-' :: d => (true, d)
+                  | '+' :: d => (false, d)
+                  | d => (false, d)
+                if ds ≠ [] ∧ ds.all isDigit then
+                  some (if eneg then -(digitsVal ds : Int) else digitsVal ds)
+                else none
+              else none
+          ex.map fun e => some (Decimal.normalize neg (digitsVal (ip ++ fp)) (e - fp.length)))
+        = some (some (partsDecimal p)) by
+    unfold NumScan.numParts at h
+    unfold rustFloat?
+    split
+    rename_i neg r hcs
+    have : NumScan.splitSign cs = (neg, r) := by
+      rw [← hcs]; rfl
+    rw [this] at h
+    exact key _ _ h
+  intro neg r h
+  obtain ⟨c, t, rfl, hc⟩ := NumScan.afterSign_head h
+  have h1 := low_ne (t := t) hc "inf" (by decide)
+  have h2 := low_ne (t := t) hc "infinity" (by decide)
+  have h3 := low_ne (t := t) hc "nan" (by decide)
+  simp only [h1, h2, h3, or_self, ↓reduceIte]
+  rw [← Option.map_some (f := fun p => some (partsDecimal p)), ← h]
+  unfold NumScan.afterSign
+  generalize List.span isDigit (c :: t) = A
+  rcases A with ⟨ip, R⟩
+  have hf : (match R with | '.' :: r' => List.span isDigit r' | r' => ([], r')) = NumScan.fracSplit R := rfl
+  dsimp only
+  rw [hf]
+  generalize NumScan.fracSplit R = B
+  rcases B with ⟨fp, R2⟩
+  dsimp only
+  by_cases hcond : ip.isEmpty = true ∧ fp.isEmpty = true
+  · simp only [hcond, and_self, ↓reduceIte, Option.map_none]
+  · simp only [hcond, ↓reduceIte, Option.map_map]
+    rfl
+
+theorem strAsFloat_eq (s : String) : strAsFloat s = strAsFloatChars s.toList := by
+  unfold strAsFloat
+  split
+  · rename_i p h
+    have hp : NumScan.numParts s.toList = some p := NumScan.numScan_eq s ▸ h
+    have ht := trim_allowed (NumScan.numScan_allowed h)
+    simp [strAsFloatChars, ht, rustFloat?_of_numParts hp]
+  · rfl
+
+theorem strAsNumber_eq (s : String) : strAsNumber s = strAsNumberChars s.toList := by
+  unfold strAsNumber
+  split
+  · rename_i p h
+    have hp : NumScan.numParts s.toList = some p := NumScan.numScan_eq s ▸ h
+    have ht := trim_allowed (NumScan.numScan_allowed h)
+    simp [strAsNumberChars, ht, rustFloat?_of_numParts hp]
+  · rfl
 
 /-- pydantic-core's `str_as_bool`. -/
 def strAsBool (s : String) : Except ErrorKind Bool :=

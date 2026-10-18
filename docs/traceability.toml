@@ -370,6 +370,15 @@ test = ["tests/Conformance.lean::unsupportedPatterns"]
 notes = "Rejected at compile time with an error; Rust's regex accepts them."
 
 [[requirement]]
+id = "regex.size-limit"
+upstream = "pydantic/tests/test_types.py::test_pattern"
+title = "Pattern size bound: maxLeaves (10000 classes once repetitions are expanded), not Rust's 10 MiB compiled-program limit"
+status = "deviation"
+realises = ["LeanPydantic.Regex.maxLeaves", "LeanPydantic.Regex.compile"]
+test = ["tests/Conformance.lean::handCases", "tests/Bench.lean::benches"]
+notes = "Rust's regex measures its own compiled program (Unicode \\w is large, a literal small), which this port cannot reproduce. (\\w{1,30}\\s?){1,20}x is SchemaError 'Compiled regex exceeds size limit' in pydantic and compiles here (620 classes; compile and calls bounded in tests/Bench.lean); a{10001} compiles in pydantic and is refused here. Both are pinned by a hand case."
+
+[[requirement]]
 id = "model.from-attributes"
 upstream = "pydantic/tests/test_main.py::test_validate_python_from_attributes"
 title = "from_attributes: model_attributes_type for a non-object at any depth (Python mode)"
@@ -390,12 +399,16 @@ notes = "int is complete on integer literals only: {type: integer} allows 1e30 a
 [[requirement]]
 id = "dos.linear"
 upstream = "pydantic-core/src/input/return_enums.rs (dict and set building), src/input/shared.rs (str_as_int)"
-title = "Hostile sizes: dict and set validation linear, int strings capped before conversion, decimal bounds independent of the exponent"
+title = "Hostile sizes: dict and set validation linear, int strings capped before conversion, float and Decimal strings read in place, decimal bounds independent of the exponent"
 status = "implemented"
 realises = ["LeanPydantic.dedupIdx", "LeanPydantic.nodupFast", "LeanPydantic.validateMembersFast",
-  "LeanPydantic.Coerce.strAsInt", "LeanPydantic.Dec.ltCore", "LeanPydantic.Dec.dvdCore"]
+  "LeanPydantic.Coerce.strAsInt", "LeanPydantic.Dec.ltCore", "LeanPydantic.Dec.dvdCore",
+  "LeanPydantic.NumScan.numScan", "LeanPydantic.NumScan.digitsVal", "LeanPydantic.Coerce.strAsFloat",
+  "LeanPydantic.Coerce.strAsNumber", "LeanPydantic.PyDecimal.parse"]
 theorem = ["LeanPydantic.dedupIdx_eq", "LeanPydantic.nodupFast_iff", "LeanPydantic.validateMembersFast_eq",
-  "LeanPydantic.Dec.ltCore_iff", "LeanPydantic.Dec.dvdCore_iff", "LeanPydantic.Num.lt_iff_core"]
+  "LeanPydantic.Dec.ltCore_iff", "LeanPydantic.Dec.dvdCore_iff", "LeanPydantic.Num.lt_iff_core",
+  "LeanPydantic.Coerce.strAsInt_eq", "LeanPydantic.NumScan.numScan_eq", "LeanPydantic.NumScan.digitsVal_eq",
+  "LeanPydantic.Coerce.strAsFloat_eq", "LeanPydantic.Coerce.strAsNumber_eq", "LeanPydantic.PyDecimal.parse_eq"]
 test = ["tests/Bench.lean::benches", "tests/Props.lean::properties"]
 notes = "Bounds in tests/Bench.lean against pydantic-core 2.14.1 on the same machine; run by check.sh and CI."
 

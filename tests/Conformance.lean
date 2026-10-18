@@ -335,6 +335,26 @@ def handCases : List Case := [
             | some (.str t) => t
             | _ => "?")
       check "[less_than_equal, less_than_equal, less_than_equal]" (toString types) },
+  { upstream := "pydantic/tests/test_types.py::test_pattern"
+    name := "regex size-limit deviation: the bound is maxLeaves classes, not Rust's compiled size"
+    run := do
+      -- Rust's regex refuses a compiled program over 10 MiB (SchemaError
+      -- "Compiled regex exceeds size limit"), measured on its own program,
+      -- where Unicode \w is large and a literal is small. Here the bound is
+      -- Parse.maxLeaves: 10000 classes once repetitions are expanded. So
+      -- (\w{1,30}\s?){1,20}x (620 classes; pydantic: SchemaError) compiles
+      -- and runs, and a{10001} (pydantic: accepted) is refused.
+      let big := "(\\w{1,30}\\s?){1,20}x"
+      let answers := match Regex.compile big with
+        | .ok r => [r.search "hello world x", r.search "hello world",
+            r.search (String.join (List.replicate 25 "word ")), r.search "x"]
+        | .error _ => []
+      let refused := match Regex.compile "a{10001}" with
+        | .ok _ => "compiled"
+        | .error _ => "error"
+      check "[true, false, false, false]" (toString answers)
+      <&&> check "error" refused
+      <&&> check "10000" (toString Regex.maxLeaves) },
   { upstream := "pydantic/tests/test_main.py::test_ultra_simple_failed"
     name := "errors without url, context, input"
     run := do
