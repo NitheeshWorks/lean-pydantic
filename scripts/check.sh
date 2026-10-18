@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The whole local gate, in the order CI runs it. The verification gate
-# (scripts/Axioms.lean) checks every declaration on the compiled environment. The verification gate
-# (scripts/Axioms.lean) checks every declaration on the compiled environment. Exits on the first failure.
+# (`lake exe axioms`, scripts/Axioms.lean) checks every declaration on the
+# compiled environment. Exits on the first failure.
 #
 #   scripts/check.sh            # everything
 #   scripts/check.sh --quick    # build and the verification gate (no tests)
@@ -13,7 +13,9 @@ echo "== build =="
 lake build
 
 echo "== verification gate =="
-lake env lean --run scripts/Axioms.lean "$LIB"
+# scripts/Axioms.lean is pinned to the stack-tools copy.
+echo "$(cat scripts/Axioms.sha256)  scripts/Axioms.lean" | sha256sum --check --quiet
+lake exe axioms "$LIB"
 
 [[ "${1:-}" == "--quick" ]] && exit 0
 

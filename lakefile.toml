@@ -31,6 +31,14 @@ root = "tests.Conformance"
 name = "bench"
 root = "tests.Bench"
 
+# The verification gate, compiled: `lake exe axioms LeanPydantic`.
+# scripts/Axioms.lean is a byte-for-byte copy of stack-tools/Axioms.lean,
+# pinned by scripts/Axioms.sha256; change it there first.
+[[lean_exe]]
+name = "axioms"
+root = "scripts.Axioms"
+supportInterpreter = true
+
 [[require]]
 name = "LeanJson"
 git = "https://github.com/NitheeshWorks/lean-json"
