@@ -26,6 +26,8 @@ inductive Keyword where
   | pattern (p : Keel.Pattern)
   | minItems (n : Nat)
   | maxItems (n : Nat)
+  /-- `uniqueItems: true`: no two items are equal. -/
+  | uniqueItems
 
 /-- A JSON Schema. -/
 inductive Schema where

@@ -82,7 +82,8 @@ def ctx : ErrorKind → List (String × Json)
   | .stringPatternMismatch p => [("pattern", .str p)]
   | .valueError e => [("error", .str e)]
   | .tooShort t n a => [("field_type", .str t), ("min_length", .num (.int n)), ("actual_length", .num (.int a))]
-  | .tooLong t n a => [("field_type", .str t), ("max_length", .num (.int n)), ("actual_length", .num (.int a))]
+  | .tooLong t n a => [("field_type", .str t), ("max_length", .num (.int n)),
+      ("actual_length", match a with | some a => .num (.int a) | none => .null)]
   | .literalError e => [("expected", .str e)]
   | .enum e => [("expected", .str e)]
   | .decimalMaxDigits n => [("max_digits", .num (.int n))]
@@ -139,7 +140,7 @@ def message (mode : InputMode) : ErrorKind → String
   | .tooShort t n a => t ++ " should have at least " ++ Num.display (.int n) ++ " item" ++
       plural (.int n) ++ " after validation, not " ++ Num.display (.int a)
   | .tooLong t n a => t ++ " should have at most " ++ Num.display (.int n) ++ " item" ++
-      plural (.int n) ++ " after validation, not " ++ Num.display (.int a)
+      plural (.int n) ++ " after validation, not " ++ (match a with | some a => Num.display (.int a) | none => "more")
   | .literalError e => "Input should be " ++ e
   | .enum e => "Input should be " ++ e
   | .decimalType => "Decimal input should be an integer, float, string or Decimal object"
@@ -160,6 +161,8 @@ inductive Piece where
   | lit (s : String)
   | var (key : String)
   | plural (key : String)
+  /-- A length, or `more` when it is unknown (`None`). -/
+  | count (key : String)
 
 /-- A container type's template (`message_template_json` says `a valid
 array`). -/
@@ -209,7 +212,7 @@ def template (mode : InputMode) (type : String) : List Piece :=
   | "too_short" => [.var "field_type", .lit " should have at least ", .var "min_length", .lit " item",
       .plural "min_length", .lit " after validation, not ", .var "actual_length"]
   | "too_long" => [.var "field_type", .lit " should have at most ", .var "max_length", .lit " item",
-      .plural "max_length", .lit " after validation, not ", .var "actual_length"]
+      .plural "max_length", .lit " after validation, not ", .count "actual_length"]
   | "literal_error" => [.lit "Input should be ", .var "expected"]
   | "enum" => [.lit "Input should be ", .var "expected"]
   | "decimal_type" => [.lit "Decimal input should be an integer, float, string or Decimal object"]
@@ -239,6 +242,9 @@ def render (ctx : List (String × Json)) : List Piece → String
   | .plural k :: ps => (match ctxLookup k ctx with
       | some (.num n) => ErrorKind.plural n
       | _ => "s") ++ render ctx ps
+  | .count k :: ps => (match ctxLookup k ctx with
+      | some (.num n) => Num.display n
+      | _ => "more") ++ render ctx ps
 
 mutual
 /-- A JSON value as pydantic holds it: jiter (and Python's `json.loads`)

@@ -20,5 +20,7 @@ theorem error_type_ctx_coherent (e : ErrorDetails) :
   cases k <;> (try cases m) <;>
     simp [ErrorKind.message, ErrorKind.ctx, ErrorKind.type, template, render, ctxLookup,
       displayValue, String.append_assoc, ErrorKind.containerMessage, containerTemplate]
+  -- `too_long` with an unknown length (sets)
+  all_goals (rename_i a; cases a <;> simp [Num.display])
 
 end LeanPydantic

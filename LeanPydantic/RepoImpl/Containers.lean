@@ -49,7 +49,7 @@ instance {α : Type} [JsonSchema α] : JsonSchema (List α) := ⟨.array (JsonSc
 instance constrainedList {β : Type} : Constrained (List β) where
   error
     | @Constraint.minLength _ _ n, x => .tooShort "List" n x.length
-    | @Constraint.maxLength _ _ n, x => .tooLong "List" n x.length
+    | @Constraint.maxLength _ _ n, x => .tooLong "List" n (some x.length)
     | _, _ => unsupportedError
   keywords
     | @Constraint.minLength _ _ n => [.minItems n]
@@ -108,5 +108,61 @@ namespace LeanPydantic
 
 /-- The empty dictionary, `{}`. -/
 instance {α : Type} : EmptyCollection (Dict α) := ⟨⟨[], List.nodup_nil⟩⟩
+
+end LeanPydantic
+
+namespace LeanPydantic
+
+open LeanJson (Json)
+open Keel (Constraint)
+
+/-! ## `set[α]` -/
+
+/-- `set[α]`: distinct elements, in first-occurrence order. Python iterates a
+set in hash order, which a dump cannot reproduce in general (for strings it
+changes from run to run); lean-pydantic dumps in input order. pydantic's
+schema says `uniqueItems: true` while it accepts and collapses duplicates,
+also strictly (UP-054), so a set has no `LawfulJson` instance. -/
+structure PySet (α : Type) where
+  elems : List α
+  nodup : elems.Nodup
+
+/-- The first occurrence of each element, in order. -/
+def firstOccurrences {α : Type} [DecidableEq α] (xs : List α) : List α :=
+  (xs.foldl (fun acc x => if x ∈ acc then acc else x :: acc) []).reverse
+
+/-- A set of the elements (each once). -/
+def PySet.ofList {α : Type} [DecidableEq α] (xs : List α) : PySet α :=
+  let ys := firstOccurrences xs
+  if h : ys.Nodup then ⟨ys, h⟩ else ⟨[], List.nodup_nil⟩
+
+instance {α : Type} [FromJson α] [DecidableEq α] : FromJson (PySet α) where
+  title := "set[" ++ FromJson.title α ++ "]"
+  fromJson cfg j :=
+    let err : Except (List ErrorDetails) (PySet α) := .error [{ kind := .setType, input := j, mode := cfg.mode }]
+    match j with
+    | .arr ⟨xs⟩ =>
+      -- strict Python wants a `set` object, which no JSON value is
+      if cfg.strict && cfg.mode = .python then err
+      else (Keel.Validator.each (fromJson cfg) xs).map PySet.ofList
+    | _ => err
+
+instance {α : Type} [ToJson α] : ToJson (PySet α) := ⟨fun o s => toJson o s.elems⟩
+instance {α : Type} [JsonSchema α] : JsonSchema (PySet α) :=
+  ⟨.array (JsonSchema.schema α) [.uniqueItems]⟩
+instance {α : Type} : Keel.Sized (PySet α) := ⟨fun s => s.elems.length⟩
+instance {α : Type} : EmptyCollection (PySet α) := ⟨⟨[], List.nodup_nil⟩⟩
+
+/-- A set's lengths: `too_short` / `too_long` with `field_type: Set`. -/
+instance {β : Type} : Constrained (PySet β) where
+  error
+    | @Constraint.minLength _ _ n, x => .tooShort "Set" n x.elems.length
+    | @Constraint.maxLength _ _ n, _ => .tooLong "Set" n none
+    | _, _ => unsupportedError
+  keywords
+    | @Constraint.minLength _ _ n => [.minItems n]
+    | @Constraint.maxLength _ _ n => [.maxItems n]
+    | _ => []
+  Std _ := True
 
 end LeanPydantic

@@ -45,6 +45,7 @@ def toPair : Keyword → String × Json
   | .pattern p => ("pattern", .str p.source)
   | .minItems n => ("minItems", .num (.int n))
   | .maxItems n => ("maxItems", .num (.int n))
+  | .uniqueItems => ("uniqueItems", .bool true)
 
 /-- A numeric keyword on a non-finite number, as a JSON Schema validator
 comparing IEEE doubles decides it: `inf` exceeds every bound, `-inf` is
@@ -67,13 +68,14 @@ def check : Keyword → Json → Bool
       | .multipleOf b => decide (Num.IsMultiple b n)
       | _ => true
     else match k with
-      | .minLength _ | .maxLength _ | .pattern _ | .minItems _ | .maxItems _ => true
+      | .minLength _ | .maxLength _ | .pattern _ | .minItems _ | .maxItems _ | .uniqueItems => true
       | k => nonFinite k n
   | .minLength k, .str s => decide (k ≤ s.length)
   | .maxLength k, .str s => decide (s.length ≤ k)
   | .pattern p, .str s => p.test s
   | .minItems k, .arr ⟨xs⟩ => decide (k ≤ xs.length)
   | .maxItems k, .arr ⟨xs⟩ => decide (xs.length ≤ k)
+  | .uniqueItems, .arr ⟨xs⟩ => decide xs.Nodup
   | _, _ => true
 
 end Keyword

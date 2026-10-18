@@ -72,7 +72,9 @@ inductive ErrorKind where
   /-- `too_short` / `too_long` for a container; `fieldType` is `List`,
   `Tuple`, `Set` or `Dict`. -/
   | tooShort (fieldType : String) (minLength actualLength : Nat)
-  | tooLong (fieldType : String) (maxLength actualLength : Nat)
+  /-- `actualLength` is unknown (`none`, shown as "more") where pydantic-core
+  stops counting at the limit, as it does for sets. -/
+  | tooLong (fieldType : String) (maxLength : Nat) (actualLength : Option Nat)
   /-- `literal_error`: not one of the allowed values, `expected` rendered as
   pydantic renders it (`'a', 'b' or 'c'`). -/
   | literalError (expected : String)

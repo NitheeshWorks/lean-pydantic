@@ -228,7 +228,7 @@ instance {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α
 theorem fromJson_prod {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] [TupleItems β] (cfg : Cfg)
     (xs : List Json) : fromJson (α := α × β) cfg (.arr ⟨xs⟩) =
       if xs.length > TupleItems.arity (α × β) then
-        .error [ErrorDetails.mk (.tooLong "Tuple" (TupleItems.arity (α × β)) xs.length) [] (.arr ⟨xs⟩) cfg.mode]
+        .error [ErrorDetails.mk (.tooLong "Tuple" (TupleItems.arity (α × β)) (some xs.length)) [] (.arr ⟨xs⟩) cfg.mode]
       else TupleItems.decode cfg (.arr ⟨xs⟩) 0 xs := rfl
 
 instance {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] [TupleItems β]

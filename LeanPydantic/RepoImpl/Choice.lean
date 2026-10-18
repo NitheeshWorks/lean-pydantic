@@ -204,7 +204,7 @@ instance fromJsonProd {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] [
   fromJson cfg
     | .arr ⟨xs⟩ =>
       if xs.length > TupleItems.arity (α × β) then
-        let k := ErrorKind.tooLong "Tuple" (TupleItems.arity (α × β)) xs.length
+        let k := ErrorKind.tooLong "Tuple" (TupleItems.arity (α × β)) (some xs.length)
         .error [{ kind := k, input := .arr ⟨xs⟩, mode := cfg.mode }]
       else TupleItems.decode cfg (.arr ⟨xs⟩) 0 xs
     | j => .error [{ kind := .tupleType, input := j, mode := cfg.mode }]

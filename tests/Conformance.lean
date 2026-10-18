@@ -171,6 +171,8 @@ def dispatch (tag : String) : Option ((String → Bool → String → String) ×
   | "tuple_isb" => r (Int × String × Bool)
   | "tuple_is" => r (Int × String)
   | "decimal" => r PyDecimal
+  | "set_int" => r (PySet Int)
+  | "set_int_min2" => r (PySet Int ∣ minLength 2 ∧ maxLength 3)
   | "plain_float" => r Float
   | "float_gt0" => r (Float ∣ gt 0)
   | "condecimal_5_2" => r (Condecimal (some 5) (some 2))
