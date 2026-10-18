@@ -57,25 +57,35 @@ structure Fields.Lawful {β : Type} (F : Fields β) : Prop where
   decode_encode : ∀ (cfg : Cfg) (j : Json) (b : β) (kvs : List (String × Json)),
     (∀ k ∈ F.keys, LeanJson.Json.lookupLast k kvs = LeanJson.Json.lookupLast k (F.encode DumpOpts.roundTrip b)) →
       F.decode cfg j kvs = .ok b
-  /-- Every field is read by its key alone (no `populate_by_name`). -/
-  lookups_eq : F.lookups = F.keys.map ([·])
+  /-- Every field is read by its key first (then, under `populate_by_name`,
+  by its name). -/
+  lookups_head : F.lookups.map List.head? = F.keys.map some
   /-- The schema's properties are the fields' keys. -/
   props_keys : F.props.map Prod.fst = F.keys
   /-- A default dump writes every field, in order. -/
   encode_keys : ∀ b : β, (F.encode DumpOpts.roundTrip b).map Prod.fst = F.keys
+  /-- A failed decode names at least one error. -/
+  ne_nil : ∀ (cfg : Cfg) (j : Json) (kvs : List (String × Json)), F.decode cfg j kvs ≠ .error []
+  /-- Every error is located under a field's key (or, for a field read by
+  its name under `populate_by_name`, its name). -/
+  loc_key : ∀ (cfg : Cfg) (j : Json) (kvs : List (String × Json)) (es : List ErrorDetails),
+    F.decode cfg j kvs = .error es → ∀ e ∈ es, ∃ k, (k ∈ F.keys ∨ k ∈ F.names) ∧ ∃ l, e.loc = .key k :: l
+  /-- `exclude_unset`: a dump by alias writes only fields counted as set
+  (`setKeys`, pydantic's `model_fields_set`). -/
+  unset_subset : ∀ (o : DumpOpts) (b : β), o.exclude_unset = true → o.by_alias = true →
+    ∀ p ∈ F.encode o b, p.1 ∈ F.setKeys o.set_from o.set_names
+
+/-- Every field is read by its key alone (no `populate_by_name`). -/
+def Fields.ByKey {β : Type} (F : Fields β) : Prop := F.lookups = F.keys.map ([·])
+
+/-- The schema law of a product of fields, which a field read by its name
+(`populate_by_name`) breaks: pydantic's schema lists only its alias. -/
+structure Fields.Sound {β : Type} (F : Fields β) : Prop where
+  by_key : F.ByKey
   /-- Strictly decoded members satisfy the properties and the required list. -/
   sound : ∀ (cfg : Cfg) (j : Json) (kvs : List (String × Json)) (b : β),
     cfg.strict = true → F.decode cfg j kvs = .ok b →
       Schema.checkProps F.props kvs = true ∧
         ∀ r ∈ F.required, (LeanJson.Json.lookupLast r kvs).isSome = true
-  /-- A failed decode names at least one error. -/
-  ne_nil : ∀ (cfg : Cfg) (j : Json) (kvs : List (String × Json)), F.decode cfg j kvs ≠ .error []
-  /-- Every error is located under a field's name. -/
-  loc_key : ∀ (cfg : Cfg) (j : Json) (kvs : List (String × Json)) (es : List ErrorDetails),
-    F.decode cfg j kvs = .error es → ∀ e ∈ es, ∃ k ∈ F.keys, ∃ l, e.loc = .key k :: l
-  /-- `exclude_unset`: a dump by alias writes only fields that were set in
-  the input it was validated from. -/
-  unset_subset : ∀ (o : DumpOpts) (b : β), o.exclude_unset = true → o.by_alias = true →
-    ∀ p ∈ F.encode o b, wasSet o.set_from p.1 = true
 
 end LeanPydantic

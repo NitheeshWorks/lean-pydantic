@@ -44,9 +44,20 @@ class Model (α : Type) where
 
 /-- A model whose fields are lawful (every field type is). `deriving Model`
 proves it when it can; a model with, say, a `Float` field has no such
-instance, and keeps its validator and serialiser without the laws. -/
-class LawfulModel (α : Type) [m : Model α] : Prop where
+instance, and keeps its validator and serialiser without the laws. The round
+trip, the located errors and the `extra='forbid'` law need only this. -/
+class LawfulFields (α : Type) [m : Model α] : Prop where
   lawful : m.fields.Lawful
+
+/-- A model whose schema is also sound: lawful fields, and no field name its
+validator accepts beside the schema's keys. `deriving Model` proves it unless
+a field is read by its name (`populate_by_name` with an alias, or
+`extra='forbid'` with an alias, from JSON text): pydantic's schema lists
+only the alias there (UP-065). -/
+class LawfulModel (α : Type) [m : Model α] : Prop extends LawfulFields α where
+  /-- Every field is read by its key alone, and strictly decoded fields
+  satisfy their schema. -/
+  sound : m.fields.Sound
   /-- Under `extra='forbid'` no field has an alias other than its name
   (pydantic's JSON validation accepts and drops such a field's name, which
   its schema forbids, so such a model has no schema-soundness law). -/
@@ -67,40 +78,60 @@ theorem fromJson_eq [m : Model α] (cfg : Cfg) (j : Json) :
 theorem toJson_eq [m : Model α] (o : DumpOpts) (a : α) :
     toJson o a = Fields.dump m.extra m.fields m.into o a := rfl
 
+/-- **Round trip**: validating a model's dump by alias gives it back, from
+its fields' laws alone (whatever its `extra` and `populate_by_name`). -/
+theorem fromJson_toJson [m : Model α] [hl : LawfulFields α] (cfg : Cfg) (a : α) :
+    fromJson cfg (toJson DumpOpts.roundTrip a) = .ok a := by
+  rw [fromJson_eq, toJson_eq, Fields.dump_roundTrip]
+  exact Fields.validate_encode hl.lawful m.back_into cfg a
+
 /-- **Every model is lawful**, from its fields' laws, whatever its `extra`
 policy. -/
 instance (priority := low) lawfulJson [m : Model α] [hl : LawfulModel α] : LawfulJson α where
-  fromJson_toJson cfg a := by
-    rw [fromJson_eq, toJson_eq, Fields.dump_roundTrip]
-    exact Fields.validate_encode hl.lawful m.back_into cfg a
+  fromJson_toJson := fromJson_toJson
   schema_sound cfg j a hs h := by
     rw [fromJson_eq] at h
-    exact Fields.validate_sound hl.lawful hl.forbid_names cfg j a hs h
+    exact Fields.validate_sound hl.lawful hl.sound hl.forbid_names cfg j a hs h
   errors_ne_nil cfg j := by
     rw [fromJson_eq]; exact Fields.validate_ne_nil hl.lawful cfg j
 
 instance (priority := low) [Model α] : NonNull α := ⟨fun _ _ => nofun⟩
 
 /-- **Errors are located**: every error of a model whose input is an object
-is placed under one of its fields' keys, or, under `extra='forbid'`, under
-one of the input's own keys (an `extra_forbidden`). -/
-theorem validate_loc_prefix [m : Model α] [hl : LawfulModel α] (cfg : Cfg) (kvs : List (String × Json))
+is placed under one of its fields (by key, or by name for a field read by its
+name under `populate_by_name`), or, under `extra='forbid'`, under one of the
+input's own keys (an `extra_forbidden`). -/
+theorem validate_loc_prefix [m : Model α] [hl : LawfulFields α] (cfg : Cfg) (kvs : List (String × Json))
     (es : List ErrorDetails) (h : fromJson (α := α) cfg (.obj ⟨kvs⟩) = .error es) :
-    ∀ e ∈ es, ∃ k, (k ∈ m.fields.keys ∨ (m.extra = .forbid ∧ k ∈ kvs.map Prod.fst)) ∧
+    ∀ e ∈ es, ∃ k, (k ∈ m.fields.keys ∨ k ∈ m.fields.names ∨ (m.extra = .forbid ∧ k ∈ kvs.map Prod.fst)) ∧
       ∃ l, e.loc = .key k :: l := by
   rw [fromJson_eq] at h
   exact Fields.validate_loc hl.lawful cfg kvs es h
 
-/-- **`extra='forbid'`**: a model validates an object exactly when every
-member's key is accepted (one of its fields' keys; from JSON text, also one
-of their names) and every field validates. -/
-theorem validate_forbid_iff [m : Model α] [hl : LawfulModel α] (hx : m.extra = .forbid) (cfg : Cfg)
+/-- **`extra='forbid'`**: a model validates an object exactly when it has no
+extras (every member's key is one the fields accept: from Python objects,
+those the fields read; from JSON text, every field's key and name) and every
+field validates. It holds for every model, `populate_by_name` and aliases
+included. -/
+theorem validate_forbid_iff [m : Model α] (hx : m.extra = .forbid) (cfg : Cfg)
+    (kvs : List (String × Json)) (a : α) :
+    fromJson cfg (.obj ⟨kvs⟩) = .ok a ↔
+      (∀ p ∈ kvs, p.1 ∈ m.fields.accepted cfg.mode kvs) ∧
+        ∃ b, m.fields.decode cfg (.obj ⟨kvs⟩) kvs = .ok b ∧ m.back b = a := by
+  rw [fromJson_eq, hx]
+  exact Fields.validate_forbid_iff _ _ _ cfg kvs a
+
+/-- **`extra='forbid'`, without `populate_by_name`**: the accepted keys no
+longer depend on the input. A model validates an object exactly when every
+member's key is a field's key (from JSON text, also a field's name) and
+every field validates. -/
+theorem validate_forbid_keys_iff [m : Model α] (hx : m.extra = .forbid) (hk : m.fields.ByKey) (cfg : Cfg)
     (kvs : List (String × Json)) (a : α) :
     fromJson cfg (.obj ⟨kvs⟩) = .ok a ↔
       (∀ p ∈ kvs, p.1 ∈ m.fields.acceptedNames cfg.mode) ∧
         ∃ b, m.fields.decode cfg (.obj ⟨kvs⟩) kvs = .ok b ∧ m.back b = a := by
   rw [fromJson_eq, hx]
-  exact Fields.validate_forbid_keys_iff hl.lawful cfg kvs a
+  exact Fields.validate_forbid_keys_iff hk cfg kvs a
 
 end Model
 
@@ -184,7 +215,7 @@ def dumpWith {α : Type} [ToJson α] (a : α) («include» : Option (List String
 
 namespace Model
 
-variable (α : Type) [Model α]
+variable (α : Type) [m : Model α]
 
 /-- `Model.model_validate(obj, strict=None, from_attributes=None)`. -/
 def model_validate (obj : Json) (strict : Bool := false) (from_attributes : Bool := false) :
@@ -219,13 +250,11 @@ def model_dump_json (a : α) (indent : Indent := {}) («include» : Option (List
 
 /-! ## What is proved about them -/
 
-variable [LawfulModel α]
-
 /-- **Round trip** (`alias_roundtrip`): validating a model's dump by alias
 gives the model back, strict or lax. -/
-theorem model_validate_model_dump (a : α) (strict : Bool := false) :
+theorem model_validate_model_dump [LawfulFields α] (a : α) (strict : Bool := false) :
     (model_validate α (model_dump a (by_alias := true)) strict).map (·.val) = .ok a := by
-  have h := LawfulJson.fromJson_toJson { strict } a
+  have h := Model.fromJson_toJson (α := α) { strict } a
   unfold model_validate validateWith
   split
   · rename_i b hb
@@ -239,7 +268,7 @@ theorem model_validate_model_dump (a : α) (strict : Bool := false) :
 
 /-- **Schema soundness**: what strict validation accepts conforms to
 `model_json_schema`'s schema. -/
-theorem schema_sound {obj : Json} {a : α} (h : (model_validate α obj (strict := true)).map (·.val) = .ok a) :
+theorem schema_sound [LawfulModel α] {obj : Json} {a : α} (h : (model_validate α obj (strict := true)).map (·.val) = .ok a) :
     Conforms (JsonSchema.schema α) obj := by
   unfold model_validate validateWith at h
   split at h
@@ -247,24 +276,37 @@ theorem schema_sound {obj : Json} {a : α} (h : (model_validate α obj (strict :
   · split at h <;> cases h
 
 /-- **Dumps conform**: a model's dump by alias conforms to its schema. -/
-theorem model_dump_conforms (a : α) : Conforms (JsonSchema.schema α) (model_dump a (by_alias := true)) :=
+theorem model_dump_conforms [LawfulModel α] (a : α) : Conforms (JsonSchema.schema α) (model_dump a (by_alias := true)) :=
   LawfulJson.schema_sound { strict := true } _ a rfl (LawfulJson.fromJson_toJson _ a)
+
+/-- An `exclude_unset` dump by alias writes only keys in `fieldsSet`. -/
+theorem dump_unset_subset [hl : LawfulFields α] (o : DumpOpts) (a : α)
+    (hu : o.exclude_unset = true) (ha : o.by_alias = true) :
+    ∀ p ∈ m.fields.encode { o with set_names := m.fields.extraKeys m.extra o.set_from o.set_mode } (m.into a) ++
+        (if m.extra = .allow then m.fields.extraDump o else []),
+      p.1 ∈ m.fields.fieldsSet m.extra o.set_from o.set_mode := fun p hp => by
+  rcases List.mem_append.1 hp with hp | hp
+  · exact List.mem_append_left _
+      (hl.lawful.unset_subset { o with set_names := m.fields.extraKeys m.extra o.set_from o.set_mode } (m.into a) hu ha p hp)
+  · split at hp
+    · rename_i hx
+      have := Fields.extraDump_key _ o p hp
+      rw [← hx] at this
+      exact List.mem_append_right _ this
+    · simp at hp
 
 /-- **`exclude_unset` dumps only what was set** (`exclude_unset_subset`): a
 dump by alias of a value validated from `j`, with `exclude_unset`, writes
-only fields present in `j`, whatever the other options. -/
-theorem exclude_unset_subset (a : α) (j : Json)
+only keys in its `model_fields_set` (fields `j` set, by key or, under
+`populate_by_name`, by name, or named by an extra; and extras), whatever the
+other options. -/
+theorem exclude_unset_subset [LawfulFields α] (a : α) (j : Json)
     («include» : Option (List String) := none) (exclude : List String := [])
     (exclude_defaults exclude_none : Bool := false) :
     ∃ kvs, model_dump a «include» exclude (by_alias := true) (exclude_unset := true)
         exclude_defaults exclude_none (set_from := some j) = .obj ⟨kvs⟩ ∧
-      ∀ p ∈ kvs, Fields.wasSet (some j) p.1 = true :=
-  ⟨_, rfl, fun p hp => by
-    rcases List.mem_append.1 hp with hp | hp
-    · exact (inferInstance : LawfulModel α).lawful.unset_subset _ (Model.into a) rfl rfl p hp
-    · split at hp
-      · exact Fields.extraDump_wasSet _ _ p hp
-      · simp at hp⟩
+      ∀ p ∈ kvs, p.1 ∈ m.fields.fieldsSet m.extra (some j) .python :=
+  ⟨_, rfl, dump_unset_subset _ a rfl rfl⟩
 
 end Model
 
@@ -319,11 +361,11 @@ def extraMembers (_ : Valid α cfg obj) : List (String × Json) :=
 
 /-- `model.model_fields_set`: the fields the input set, by their keys
 (aliases where the model gives them), in the model's order, then (under
-`extra='allow'`) the extras' keys. -/
-def model_fields_set (v : Valid α cfg obj) : List String :=
-  (m.fields.keys.zip m.fields.lookups).filterMap (fun (k, cs) =>
-      if cs.any (Fields.wasSet (some obj)) then some k else none) ++
-    (if m.extra = .allow then v.extraMembers.map Prod.fst else [])
+`extra='allow'`) the extras' keys. A field is set when the input has its key
+(or, under `populate_by_name`, its name), or, as in pydantic, when an extra
+is named like it. -/
+def model_fields_set (_ : Valid α cfg obj) : List String :=
+  m.fields.fieldsSet m.extra (some obj) cfg.mode
 
 /-- `model.model_extra`: the members no field read, under `extra='allow'`
 (an object, in input order); `none` otherwise, as pydantic gives `None`. -/
@@ -331,21 +373,15 @@ def model_extra (v : Valid α cfg obj) : Option Json :=
   if m.extra = .allow then some (.obj ⟨v.extraMembers⟩) else none
 
 /-- **`exclude_unset` dumps only what was set**, with no input to pass: a
-validated model's dump by alias writes only fields its input set. -/
-theorem exclude_unset_subset [LawfulModel α] (v : Valid α cfg obj)
+validated model's dump by alias writes only keys in its `model_fields_set`. -/
+theorem exclude_unset_subset [LawfulFields α] (v : Valid α cfg obj)
     («include» : Option (List String) := none) (exclude : List String := [])
     (exclude_defaults exclude_none : Bool := false) :
     ∃ kvs, v.model_dump «include» exclude (by_alias := true) (exclude_unset := true)
         exclude_defaults exclude_none = .obj ⟨kvs⟩ ∧
-      ∀ p ∈ kvs, Fields.wasSet (some obj) p.1 = true := by
+      ∀ p ∈ kvs, p.1 ∈ v.model_fields_set := by
   let o := validOpts «include» exclude true true exclude_defaults exclude_none obj cfg.mode
-  have hs : ∀ p ∈ m.fields.encode o (m.into v.val) ++ (if m.extra = .allow then m.fields.extraDump o else []),
-      Fields.wasSet (some obj) p.1 = true := fun p hp => by
-    rcases List.mem_append.1 hp with hp | hp
-    · exact (inferInstance : LawfulModel α).lawful.unset_subset o _ rfl rfl p hp
-    · split at hp
-      · exact Fields.extraDump_wasSet _ o p hp
-      · simp at hp
+  have hs := Model.dump_unset_subset (α := α) o v.val rfl rfl
   unfold model_dump
   simp only [Model.toJson_eq, Fields.dump]
   split <;> rename_i hx

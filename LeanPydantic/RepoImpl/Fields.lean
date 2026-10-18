@@ -52,6 +52,10 @@ structure Fields (β : Type) where
   names : List String
   props : List (String × Schema)
   required : List String
+  /-- The keys of the fields counted as set (pydantic's `model_fields_set`),
+  given the input the value was validated from and that input's extras'
+  keys. -/
+  setKeys : Option Json → List String → List String
 
 namespace Fields
 
@@ -64,6 +68,7 @@ def nil : Fields Unit where
   names := []
   props := []
   required := []
+  setKeys _ _ := []
 
 /-- The validator of one field: its member's value, else its default, else
 `missing` (whose input is the whole object `j`). Errors are placed under the
@@ -121,6 +126,12 @@ def wasSet (set_from : Option Json) (key : String) : Bool :=
   | some (.obj ⟨kvs⟩) => (LeanJson.Json.lookupLast key kvs).isSome
   | _ => true
 
+/-- Whether a field counts as set (in pydantic's `model_fields_set`): the
+input had one of its keys `cs`, or an extra named `name`. Every field is set
+when the input is unknown. -/
+def isSet (set_from : Option Json) (set_names : List String) (cs : List String) (name : String) : Bool :=
+  cs.any (wasSet set_from) || decide (name ∈ set_names)
+
 /-- A field `name : α`, validated under `alias` when it has one (pydantic's
 `Field(alias=…)`), and also under `name` when `byName` (`populate_by_name`),
 with an optional default, before the fields `rest`. -/
@@ -138,7 +149,7 @@ def field {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] (name : Strin
         | some d => decide (toJson { serializers := false } p.1 = toJson { serializers := false } d)
         | none => false
       let rest' := rest.encode opts p.2
-      if keep opts name v isDefault (wasSet opts.set_from setKey) then
+      if keep opts name v isDefault (isSet opts.set_from opts.set_names (if byName then [key, name] else [key]) name) then
         ((if opts.by_alias then key else name), v) :: rest'
       else rest'
     keys := key :: rest.keys
@@ -147,7 +158,9 @@ def field {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] (name : Strin
     props := (key, .annotated (JsonSchema.schema α)
       (if (JsonSchema.schema α).wantsTitle then some (fieldTitle key) else none)
       (if factory then none else default.map (toJson { serializers := false }))) :: rest.props
-    required := if default.isSome then rest.required else key :: rest.required }
+    required := if default.isSome then rest.required else key :: rest.required
+    setKeys := fun sf ns =>
+      (if isSet sf ns (if byName then [key, name] else [key]) name then [key] else []) ++ rest.setKeys sf ns }
 
 variable {α β : Type}
 
@@ -217,9 +230,24 @@ def extraDump (F : Fields β) (opts : DumpOpts) : List (String × Json) :=
   | some (.obj ⟨kvs⟩) => (dedup (F.extras opts.set_mode kvs)).filter (keepExtra opts)
   | _ => []
 
-/-- The model serialiser: the fields, then (under `allow`) the extras. -/
+/-- The extras' keys of the input `set_from` (each once), under `allow`. -/
+def extraKeys (extra : Extra) (F : Fields β) (set_from : Option Json) (mode : InputMode) : List String :=
+  if extra = .allow then
+    match set_from with
+    | some (.obj ⟨kvs⟩) => (dedup (F.extras mode kvs)).map Prod.fst
+    | _ => []
+  else []
+
+/-- pydantic's `model_fields_set`, by key: the fields counted as set, then
+(under `allow`) the extras' keys. -/
+def fieldsSet (extra : Extra) (F : Fields β) (set_from : Option Json) (mode : InputMode) : List String :=
+  F.setKeys set_from (F.extraKeys extra set_from mode) ++ F.extraKeys extra set_from mode
+
+/-- The model serialiser: the fields, then (under `allow`) the extras. An
+extra named like a field marks that field as set. -/
 def dump (extra : Extra) (F : Fields β) (into : α → β) (opts : DumpOpts) (a : α) : Json :=
-  .obj ⟨F.encode opts (into a) ++ (if extra = .allow then F.extraDump opts else [])⟩
+  .obj ⟨F.encode { opts with set_names := F.extraKeys extra opts.set_from opts.set_mode } (into a) ++
+    (if extra = .allow then F.extraDump opts else [])⟩
 
 /-- The model schema: a reference, named by the model's title, to its object
 schema (pydantic puts every model under `$defs`; a document for the model

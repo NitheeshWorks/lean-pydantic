@@ -171,6 +171,7 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
   -- the field chain and its lawfulness proof, built from the last field back
   let mut fieldsStx ← `(LeanPydantic.Fields.nil)
   let mut lawStx ← `(LeanPydantic.Fields.nil_lawful)
+  let mut soundStx ← `(LeanPydantic.Fields.nil_sound)
   let mut byNameAny := false
   let mut aliasAny := false
   for (f, fty) in modelFields.reverse do
@@ -196,6 +197,7 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
     let byNameStx ← if byName then `(true) else `(false)
     fieldsStx ← `(LeanPydantic.Fields.field $nameLit $aliasStx $dflt $fieldsStx $factoryStx $byNameStx)
     lawStx ← `(LeanPydantic.Fields.field_lawful (by decide) $lawStx)
+    soundStx ← `(LeanPydantic.Fields.field_sound $soundStx)
   -- into: the tuple of fields; back: the constructor applied to its parts
   let x := mkIdent `x
   let p := mkIdent `p
@@ -221,20 +223,24 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
       back := fun $p => $ctor $parts*
       back_into := fun _ => rfl
       extra := $extraStx))
-  -- the laws, when every field type has them (a `Float` field has none) and
-  -- no field is also read by its name (pydantic's schema lists only the alias,
-  -- so a value read by name would not conform to it)
-  let lawful ← if byNameAny || (extra == ``LeanPydantic.Extra.forbid && aliasAny) then pure false else liftTermElabM <| fieldTypes.allM fun fty => do
+  -- the laws, when every field type has them (a `Float` field has none)
+  let fieldsLawful ← liftTermElabM <| fieldTypes.allM fun fty => do
     let inst ← mkAppOptM ``LeanPydantic.LawfulJson #[some fty, none, none, none]
     return (← trySynthInstance inst) matches .some _
-  if lawful then
+  if fieldsLawful then
     elabCommand (← `(command|
-      instance : LeanPydantic.LawfulModel $tyId := ⟨$lawStx, by decide⟩))
+      instance : LeanPydantic.LawfulFields $tyId := ⟨$lawStx⟩))
     elabCommand (← `(command|
-      /-- Validating a dump by alias gives the model back (an instance of `LawfulJson`). -/
+      /-- Validating a dump by alias gives the model back. -/
       theorem $(mkIdent (`_root_ ++ n ++ `fromJson_toJson)) (cfg : LeanPydantic.Cfg) (a : $tyId) :
           LeanPydantic.fromJson cfg (LeanPydantic.toJson LeanPydantic.DumpOpts.roundTrip a) = .ok a :=
-        LeanPydantic.LawfulJson.fromJson_toJson cfg a))
+        LeanPydantic.Model.fromJson_toJson cfg a))
+  -- schema soundness, unless a field is also read by its name (pydantic's
+  -- schema lists only the alias, so a value read by name would not conform
+  -- to it: UP-065)
+  if fieldsLawful && !(byNameAny || (extra == ``LeanPydantic.Extra.forbid && aliasAny)) then
+    elabCommand (← `(command|
+      instance : LeanPydantic.LawfulModel $tyId := { lawful := $lawStx, sound := $soundStx, forbid_names := by decide }))
     elabCommand (← `(command|
       /-- Strict validation accepts only input the model's schema allows. -/
       theorem $(mkIdent (`_root_ ++ n ++ `schema_sound)) (cfg : LeanPydantic.Cfg) (j : LeanJson.Json) (a : $tyId)

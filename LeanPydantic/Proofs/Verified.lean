@@ -64,10 +64,14 @@ structure VerifiedWrappers : Prop where
 structure VerifiedModel : Prop where
   /-- The field combinator preserves the laws. -/
   fieldLawful : ∀ (α β : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (name : String)
-    (alias : Option String) (d : Option α) (rest : Fields β), alias.getD name ∉ rest.keys →
-      rest.Lawful → (Fields.field name alias d rest).Lawful
+    (alias : Option String) (d : Option α) (rest : Fields β) (factory byName : Bool), alias.getD name ∉ rest.keys →
+      rest.Lawful → (Fields.field name alias d rest factory byName).Lawful
+  /-- A field read by its key alone keeps the schema law. -/
+  fieldSound : ∀ (α β : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (name : String)
+    (alias : Option String) (d : Option α) (rest : Fields β) (factory : Bool),
+      rest.Sound → (Fields.field name alias d rest factory).Sound
   /-- Validating a dump by alias gives the model back (`alias_roundtrip`). -/
-  validateDump : ∀ (α : Type) [Model α] [LawfulModel α] (a : α) (strict : Bool),
+  validateDump : ∀ (α : Type) [Model α] [LawfulFields α] (a : α) (strict : Bool),
     (Model.model_validate α (Model.model_dump a (by_alias := true)) strict).map (·.val) = .ok a
   /-- Strict validation accepts only what the schema allows. -/
   schemaSound : ∀ (α : Type) [Model α] [LawfulModel α] (obj : Json) (a : α),
@@ -75,15 +79,23 @@ structure VerifiedModel : Prop where
   /-- Dumps conform to the schema. -/
   dumpConforms : ∀ (α : Type) [Model α] [LawfulModel α] (a : α),
     Conforms (JsonSchema.schema α) (Model.model_dump a (by_alias := true))
-  /-- Every error of an object's validation is located under a field, or,
-  under `extra='forbid'`, under one of the input's keys. -/
-  locPrefix : ∀ (α : Type) [m : Model α] [LawfulModel α] (cfg : Cfg) (kvs : List (String × Json)) es,
+  /-- Every error of an object's validation is located under a field (by
+  key, or by name when read by its name), or, under `extra='forbid'`, under
+  one of the input's keys. -/
+  locPrefix : ∀ (α : Type) [m : Model α] [LawfulFields α] (cfg : Cfg) (kvs : List (String × Json)) es,
     fromJson (α := α) cfg (.obj ⟨kvs⟩) = .error es → ∀ e ∈ es,
-      ∃ k, (k ∈ m.fields.keys ∨ (m.extra = .forbid ∧ k ∈ kvs.map Prod.fst)) ∧ ∃ l, e.loc = .key k :: l
-  /-- `extra='forbid'`: an object validates exactly when every member's key
-  is accepted (a field's key; from JSON text, also a field's name) and every
-  field validates. -/
-  forbidIff : ∀ (α : Type) [m : Model α] [LawfulModel α], m.extra = .forbid → ∀ (cfg : Cfg)
+      ∃ k, (k ∈ m.fields.keys ∨ k ∈ m.fields.names ∨ (m.extra = .forbid ∧ k ∈ kvs.map Prod.fst)) ∧
+        ∃ l, e.loc = .key k :: l
+  /-- `extra='forbid'`, for every model: an object validates exactly when
+  every member's key is accepted (read by a field from Python objects; a
+  field's key or name from JSON text) and every field validates. -/
+  forbidIff : ∀ (α : Type) [m : Model α], m.extra = .forbid → ∀ (cfg : Cfg)
+    (kvs : List (String × Json)) (a : α), fromJson cfg (.obj ⟨kvs⟩) = .ok a ↔
+      (∀ p ∈ kvs, p.1 ∈ m.fields.accepted cfg.mode kvs) ∧
+        ∃ b, m.fields.decode cfg (.obj ⟨kvs⟩) kvs = .ok b ∧ m.back b = a
+  /-- The same without `populate_by_name`, where the accepted keys are fixed:
+  the fields' keys (from JSON text, also their names). -/
+  forbidKeysIff : ∀ (α : Type) [m : Model α], m.extra = .forbid → m.fields.ByKey → ∀ (cfg : Cfg)
     (kvs : List (String × Json)) (a : α), fromJson cfg (.obj ⟨kvs⟩) = .ok a ↔
       (∀ p ∈ kvs, p.1 ∈ m.fields.acceptedNames cfg.mode) ∧
         ∃ b, m.fields.decode cfg (.obj ⟨kvs⟩) kvs = .ok b ∧ m.back b = a
@@ -129,14 +141,14 @@ structure VerifiedSurface : Prop where
     (j : Json) (a : α), Choices.exactly (τ := α ⊕ β) cfg j = none →
       fromJson (α := α) cfg.strictly j = .ok a → fromJson (α := α ⊕ β) cfg j = .ok (.inl a)
   /-- `exclude_unset_subset`: an `exclude_unset` dump writes only fields set in the input. -/
-  excludeUnsetSubset : ∀ (α : Type) [Model α] [LawfulModel α] (a : α) (j : Json),
+  excludeUnsetSubset : ∀ (α : Type) [m : Model α] [LawfulFields α] (a : α) (j : Json),
     ∃ kvs, Model.model_dump a (by_alias := true) (exclude_unset := true) (set_from := some j) = .obj ⟨kvs⟩ ∧
-      ∀ p ∈ kvs, Fields.wasSet (some j) p.1 = true
+      ∀ p ∈ kvs, p.1 ∈ m.fields.fieldsSet m.extra (some j) .python
   /-- The same, in the form users call: a validated model remembers its
   input, so no `set_from` is passed (`Valid.exclude_unset_subset`). -/
-  validExcludeUnsetSubset : ∀ (α : Type) [Model α] [LawfulModel α] (cfg : Cfg) (obj : Json) (v : Valid α cfg obj),
+  validExcludeUnsetSubset : ∀ (α : Type) [Model α] [LawfulFields α] (cfg : Cfg) (obj : Json) (v : Valid α cfg obj),
     ∃ kvs, v.model_dump (by_alias := true) (exclude_unset := true) = .obj ⟨kvs⟩ ∧
-      ∀ p ∈ kvs, Fields.wasSet (some obj) p.1 = true
+      ∀ p ∈ kvs, p.1 ∈ v.model_fields_set
   /-- `schema_complete` for scalars: every input their schema allows validates. -/
   completeBool : ∀ cfg, SchemaComplete Bool cfg
   completeString : ∀ cfg, SchemaComplete String cfg
@@ -163,12 +175,14 @@ theorem theVerifiedWrappers : VerifiedWrappers where
   refinedIff _ _ _ c cfg j y := fromJson_refined_iff c cfg j y
 
 theorem theVerifiedModel : VerifiedModel where
-  fieldLawful _ _ _ _ _ _ _ _ _ _ h hr := Fields.field_lawful h hr
+  fieldLawful _ _ _ _ _ _ _ _ _ _ _ _ h hr := Fields.field_lawful h hr
+  fieldSound _ _ _ _ _ _ _ _ _ _ _ hr := Fields.field_sound hr
   validateDump _ _ _ a strict := Model.model_validate_model_dump a strict
   schemaSound _ _ _ _ _ h := Model.schema_sound h
   dumpConforms _ _ _ a := Model.model_dump_conforms a
   locPrefix _ _ _ cfg kvs es h := Model.validate_loc_prefix cfg kvs es h
-  forbidIff _ _ _ hx cfg kvs a := Model.validate_forbid_iff hx cfg kvs a
+  forbidIff _ _ hx cfg kvs a := Model.validate_forbid_iff hx cfg kvs a
+  forbidKeysIff _ _ hx hk cfg kvs a := Model.validate_forbid_keys_iff hx hk cfg kvs a
 
 theorem theVerifiedSurface : VerifiedSurface where
   listLawful _ _ _ _ _ := inferInstance

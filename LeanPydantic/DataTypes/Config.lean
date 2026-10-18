@@ -54,6 +54,10 @@ structure DumpOpts where
   /-- Whether `set_from` came as Python objects or as JSON text: under
   `extra='allow'` the two keep different extras (`Fields.accepted`). -/
   set_mode : InputMode := .python
+  /-- The extras' keys of that input, under `extra='allow'` (set by the
+  model's dump): pydantic's `model_fields_set` holds them, so a field whose
+  name is one of them counts as set. -/
+  set_names : List String := []
   /-- Apply serializers (`Serialize`, `WrapSerialize`). Off, a value dumps as
   validation sees it, which is how pydantic writes a JSON Schema default
   and compares a value with its default for `exclude_defaults`. -/

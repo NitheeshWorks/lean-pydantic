@@ -224,17 +224,17 @@ title = "deriving Model on a structure: fields, defaults, lawfulness, per-model 
 status = "implemented"
 realises = ["LeanPydantic.Derive.mkModelCmds", "LeanPydantic.Derive.mkModelHandler"]
 test = ["tests/Conformance.lean::tableCases"]
-notes = "Structures without parameters or parents, defaults that do not refer to other fields. A `model_config : ConfigDict (extra := ..) (populate_by_name := ..) := {}` member sets the model config. LawfulModel is derived for every model except those with populate_by_name and an alias, or extra='forbid' and an alias: pydantic's own schema disagrees with its validation there (model.extra, UP-065)."
+notes = "Structures without parameters or parents, defaults that do not refer to other fields. A `model_config : ConfigDict (extra := ..) (populate_by_name := ..) := {}` member sets the model config. LawfulFields (round trip, located errors, the forbid law, exclude_unset) is derived for every model; LawfulModel (schema soundness) for every model except those with populate_by_name and an alias, or extra='forbid' and an alias: pydantic's own schema disagrees with its validation there (model.extra, UP-065)."
 
 [[requirement]]
 id = "model.extra"
 upstream = "pydantic/tests/test_main.py::test_forbidden_extra_fails"
 title = "model_config extra='ignore' | 'forbid' | 'allow': extra_forbidden per extra key (after field errors for Python input, before them for JSON text), extras dumped after the fields under allow, model_extra, additionalProperties false/true, populate_by_name"
 status = "deviation"
-realises = ["LeanPydantic.Extra", "LeanPydantic.ConfigDict", "LeanPydantic.Fields.validate", "LeanPydantic.Fields.forbidExtras", "LeanPydantic.Fields.extraDump", "LeanPydantic.Fields.accepted", "LeanPydantic.Valid.model_extra"]
-theorem = ["LeanPydantic.Model.validate_forbid_iff", "LeanPydantic.Fields.validate_forbid_iff", "LeanPydantic.Fields.validate_forbid_keys_iff", "LeanPydantic.Model.validate_loc_prefix", "LeanPydantic.VerifiedModel.forbidIff"]
+realises = ["LeanPydantic.Extra", "LeanPydantic.ConfigDict", "LeanPydantic.Fields.validate", "LeanPydantic.Fields.forbidExtras", "LeanPydantic.Fields.extraDump", "LeanPydantic.Fields.accepted", "LeanPydantic.Valid.model_extra", "LeanPydantic.Fields.fieldsSet", "LeanPydantic.LawfulFields"]
+theorem = ["LeanPydantic.Model.validate_forbid_iff", "LeanPydantic.Model.validate_forbid_keys_iff", "LeanPydantic.Fields.validate_forbid_iff", "LeanPydantic.Fields.validate_forbid_keys_iff", "LeanPydantic.Model.validate_loc_prefix", "LeanPydantic.VerifiedModel.forbidIff", "LeanPydantic.VerifiedModel.forbidKeysIff", "LeanPydantic.Valid.exclude_unset_subset"]
 test = ["tests/Conformance.lean::tableCases", "tests/Conformance.lean::dumpCases", "tests/Conformance.lean::schemaCases", "tests/Conformance.lean::handCases"]
-notes = "Accepted keys follow pydantic-core: for Python input the keys the fields read (with populate_by_name the alias if present, else the name), for JSON text every alias and every field name. Deviations: a key repeated in JSON text gives one extra_forbidden (the last value; lean-json keeps the last duplicate), pydantic one per occurrence; under allow an extra named like an aliased field does not mark that field set, so exclude_unset leaves it out (pydantic's model_fields_set holds names). populate_by_name with an alias, and forbid with an alias, have no LawfulModel: the schema pydantic emits rejects input its validator accepts (UP-065)."
+notes = "Accepted keys follow pydantic-core: for Python input the keys the fields read (with populate_by_name the alias if present, else the name), for JSON text every alias and every field name. As in pydantic, under allow an extra named like an aliased field (Python input) marks that field set for exclude_unset. Deviation: a key repeated in JSON text gives one extra_forbidden (the last value; lean-json keeps the last duplicate), pydantic one per occurrence. populate_by_name with an alias, and forbid with an alias, keep LawfulFields (round trip, located errors, the forbid law) but have no LawfulModel (schema soundness): the schema pydantic emits rejects input its validator accepts (UP-065)."
 
 [[requirement]]
 id = "api.type-adapter"

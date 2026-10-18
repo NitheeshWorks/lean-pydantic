@@ -60,7 +60,10 @@ be a Hoare triple over a heap.
   each field-name freshness side condition closed by `decide`.
 * `APIs/Model.lean`: the public equations (`model_validate_model_dump`,
   `schema_sound`, `model_dump_conforms`, `validate_loc_prefix`,
-  `validate_forbid_iff`).
+  `validate_forbid_iff`). `LawfulFields` (the fields' laws, derived for
+  every model) carries the round trip, the located errors and
+  `exclude_unset`; `LawfulModel` adds schema soundness (`Fields.Sound`) where
+  it holds.
 
 ### Canonical constraints
 
@@ -134,12 +137,11 @@ Listed here with the reason, and in `docs/traceability.toml` with
 * `PyDecimal` reads only ASCII digits in strings.
 * `extra='forbid'` on JSON text with a repeated extra key reports one
   `extra_forbidden` (the last value); pydantic reports one per occurrence.
-* `extra='allow'`: an extra key spelled like an aliased field's name does not
-  mark that field set; pydantic's name-based `model_fields_set` does, so its
-  `exclude_unset` dump keeps the field.
-* No `LawfulModel` for a model with `populate_by_name` and an alias, or with
-  `extra='forbid'` and an alias: pydantic's schema rejects input its
-  validator accepts there (by name, or the name under JSON text; UP-065).
+* No schema-soundness law (`LawfulModel`) for a model with `populate_by_name`
+  and an alias, or with `extra='forbid'` and an alias: pydantic's schema
+  rejects input its validator accepts there (by name, or the name under JSON
+  text; UP-065). Every derived model has `LawfulFields` (the round trip, the
+  located errors and the `forbid` law).
 * UP-045 (strict `Literal[1, 2]` accepting `True`): matched in lax mode,
   rejected in strict mode, so the strict schema law holds.
 * A constraint given twice must hold both times (pydantic keeps the last);

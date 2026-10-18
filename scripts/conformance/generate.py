@@ -398,11 +398,11 @@ DUMP_ROWS = [('shop', t, opts) for t in [
   [(tag, t, opts) for tag, ts in [('extra_alias_allow', EXTRA_ALIAS_IN), ('extra_allow', EXTRA_ALLOW_IN[:3]),
                                   ('extra_nested', EXTRA_NESTED_IN[1:3])] for t in ts
    for opts in [(False, False, False, False), (True, False, False, False), (False, True, False, False),
-                (True, True, False, False), (False, False, True, False)]
-   # an extra named like an aliased field puts that name in pydantic's
-   # model_fields_set, so exclude_unset dumps the field: a documented deviation
-   # (model.extra in docs/traceability.toml), pinned by a hand case
-   if not (opts[1] and t in ('{"a":"x","alias_b":"y"}', '{"z":1,"a":1,"b":"q","y":[1]}'))]
+                (True, True, False, False), (False, False, True, False)]]
+# an extra named like an aliased field puts that name in pydantic's
+# model_fields_set, so exclude_unset dumps the field
+DUMP_ROWS += [('extra_allow', t, opts) for t in ['{"a":1,"b":"v"}', '{"a":1,"B":"w","b":"v"}', '{"y":[2],"b":"v","a":3}']
+              for opts in [(True, True, False, False), (False, True, False, False)]]
 
 def run_dump(tag, text, opts):
     ta = TypeAdapter(TYPES[tag])

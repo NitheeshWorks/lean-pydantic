@@ -89,6 +89,21 @@ structure ExtraPop where
   b : Alias "B" String
   deriving Model
 
+/-! The field laws hold for every derived model, aliases with `forbid` and
+`populate_by_name` included, so the `forbid` law, the located errors and the
+round trip apply to them; only schema soundness is withheld (UP-065). -/
+example : LawfulFields ExtraForbid := inferInstance
+example : LawfulFields ExtraPop := inferInstance
+example (cfg : Cfg) (kvs : List (String × Json)) (a : ExtraForbid) :=
+  Model.validate_forbid_iff (α := ExtraForbid) rfl cfg kvs a
+example (cfg : Cfg) (kvs : List (String × Json)) (a : ExtraForbid) :=
+  Model.validate_forbid_keys_iff (α := ExtraForbid) rfl rfl cfg kvs a
+example (cfg : Cfg) (kvs : List (String × Json)) (a : ExtraPop) :=
+  Model.validate_forbid_iff (α := ExtraPop) rfl cfg kvs a
+example (a : ExtraPop) := Model.model_validate_model_dump a
+example (cfg : Cfg) (kvs : List (String × Json)) (es) (h : fromJson (α := ExtraPop) cfg (.obj ⟨kvs⟩) = .error es) :=
+  Model.validate_loc_prefix cfg kvs es h
+
 structure ExtraNested where
   model_config : ConfigDict (extra := .forbid) := {}
   inner : ExtraAllow
@@ -312,7 +327,7 @@ def handCases : List Case := [
       let js := match ExtraAllow.model_validate_json "{\"z\": 1, \"a\": 1, \"b\": \"q\"}" with
         | .ok v => extraReport v.toValid
         | .error e => e.json
-      check "(some {\"z\":1,\"b\":\"q\"}) [a, z, b] {\"a\":1,\"b\":\"q\",\"z\":1}" py
+      check "(some {\"z\":1,\"b\":\"q\"}) [a, B, z, b] {\"a\":1,\"b\":\"q\",\"z\":1}" py
       <&&> check "(some {\"z\":1}) [a, z] {\"a\":1,\"b\":\"x\",\"z\":1}" js },
   { upstream := "pydantic/tests/test_main.py::test_model_extra_is_none_when_extra_is_forbid"
     name := "extra='forbid' and 'ignore': model_extra is None"
@@ -331,12 +346,16 @@ def handCases : List Case := [
         | .ok _ => "ok"
         | .error e => e.json (include_url := false)) },
   { upstream := "pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra"
-    name := "extra='allow' deviation: an extra named like an aliased field does not set that field"
-    -- pydantic: {"a":1,"b":"x","z":1,"b":"q","y":[1]} (its model_fields_set holds the name 'b')
-    run := check "{\"a\":1,\"z\":1,\"b\":\"q\",\"y\":[1]}"
-      (match ExtraAllow.model_validate (json% {"z": 1, "a": 1, "b": "q", "y": [1]}) with
+    name := "extra='allow': an extra named like an aliased field marks that field set (Python input only)"
+    run := do
+      let py := match ExtraAllow.model_validate (json% {"z": 1, "a": 1, "b": "q", "y": [1]}) with
         | .ok v => v.model_dump_json (exclude_unset := true)
-        | .error e => e.json) },
+        | .error e => e.json
+      -- from JSON text a field's name is never an extra, so it marks nothing
+      let js := match ExtraAllow.model_validate_json "{\"z\":1,\"a\":1,\"b\":\"q\"}" with
+        | .ok v => v.model_dump_json (exclude_unset := true) (by_alias := true)
+        | .error e => e.json
+      check "{\"a\":1,\"b\":\"x\",\"z\":1,\"b\":\"q\",\"y\":[1]}" py <&&> check "{\"a\":1,\"z\":1}" js },
   { upstream := "pydantic/tests/test_types.py::test_ser_json_inf_nan"
     name := "float: ser_json_inf_nan null, constants, strings"
     run := do

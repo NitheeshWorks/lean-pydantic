@@ -1902,6 +1902,8 @@ def dumpTable : List (String × String × String × (Bool × Bool × Bool × Boo
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_alias_allow", "{\"extra_key\":\"extra\"}", (false, false, true, false), "{\"a\":\"default\",\"b\":\"default\",\"extra_key\":\"extra\"}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_alias_allow", "{\"a\":\"x\",\"alias_b\":\"y\"}", (false, false, false, false), "{\"a\":\"default\",\"b\":\"y\",\"a\":\"x\"}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_alias_allow", "{\"a\":\"x\",\"alias_b\":\"y\"}", (true, false, false, false), "{\"alias_a\":\"default\",\"alias_b\":\"y\",\"a\":\"x\"}"),
+  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_alias_allow", "{\"a\":\"x\",\"alias_b\":\"y\"}", (false, true, false, false), "{\"a\":\"default\",\"b\":\"y\",\"a\":\"x\"}"),
+  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_alias_allow", "{\"a\":\"x\",\"alias_b\":\"y\"}", (true, true, false, false), "{\"alias_a\":\"default\",\"alias_b\":\"y\",\"a\":\"x\"}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_alias_allow", "{\"a\":\"x\",\"alias_b\":\"y\"}", (false, false, true, false), "{\"a\":\"default\",\"b\":\"y\",\"a\":\"x\"}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"a\":1}", (false, false, false, false), "{\"a\":1,\"b\":\"x\"}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"a\":1}", (true, false, false, false), "{\"a\":1,\"B\":\"x\"}"),
@@ -1910,6 +1912,8 @@ def dumpTable : List (String × String × String × (Bool × Bool × Bool × Boo
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"a\":1}", (false, false, true, false), "{\"a\":1,\"b\":\"x\"}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"z\":1,\"a\":1,\"b\":\"q\",\"y\":[1]}", (false, false, false, false), "{\"a\":1,\"b\":\"x\",\"z\":1,\"b\":\"q\",\"y\":[1]}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"z\":1,\"a\":1,\"b\":\"q\",\"y\":[1]}", (true, false, false, false), "{\"a\":1,\"B\":\"x\",\"z\":1,\"b\":\"q\",\"y\":[1]}"),
+  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"z\":1,\"a\":1,\"b\":\"q\",\"y\":[1]}", (false, true, false, false), "{\"a\":1,\"b\":\"x\",\"z\":1,\"b\":\"q\",\"y\":[1]}"),
+  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"z\":1,\"a\":1,\"b\":\"q\",\"y\":[1]}", (true, true, false, false), "{\"a\":1,\"B\":\"x\",\"z\":1,\"b\":\"q\",\"y\":[1]}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"z\":1,\"a\":1,\"b\":\"q\",\"y\":[1]}", (false, false, true, false), "{\"a\":1,\"b\":\"x\",\"z\":1,\"b\":\"q\",\"y\":[1]}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"a\":1,\"B\":\"v\",\"c\":{\"d\":null}}", (false, false, false, false), "{\"a\":1,\"b\":\"v\",\"c\":{\"d\":null}}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"a\":1,\"B\":\"v\",\"c\":{\"d\":null}}", (true, false, false, false), "{\"a\":1,\"B\":\"v\",\"c\":{\"d\":null}}"),
@@ -1925,7 +1929,13 @@ def dumpTable : List (String × String × String × (Bool × Bool × Bool × Boo
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_nested", "{\"inner\":{\"a\":1},\"f\":null}", (true, false, false, false), "{\"inner\":{\"a\":1,\"B\":\"x\"},\"f\":null}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_nested", "{\"inner\":{\"a\":1},\"f\":null}", (false, true, false, false), "{\"inner\":{\"a\":1},\"f\":null}"),
   ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_nested", "{\"inner\":{\"a\":1},\"f\":null}", (true, true, false, false), "{\"inner\":{\"a\":1},\"f\":null}"),
-  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_nested", "{\"inner\":{\"a\":1},\"f\":null}", (false, false, true, false), "{\"inner\":{\"a\":1,\"b\":\"x\"}}")
+  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_nested", "{\"inner\":{\"a\":1},\"f\":null}", (false, false, true, false), "{\"inner\":{\"a\":1,\"b\":\"x\"}}"),
+  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"a\":1,\"b\":\"v\"}", (true, true, false, false), "{\"a\":1,\"B\":\"x\",\"b\":\"v\"}"),
+  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"a\":1,\"b\":\"v\"}", (false, true, false, false), "{\"a\":1,\"b\":\"x\",\"b\":\"v\"}"),
+  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"a\":1,\"B\":\"w\",\"b\":\"v\"}", (true, true, false, false), "{\"a\":1,\"B\":\"w\",\"b\":\"v\"}"),
+  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"a\":1,\"B\":\"w\",\"b\":\"v\"}", (false, true, false, false), "{\"a\":1,\"b\":\"w\",\"b\":\"v\"}"),
+  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"y\":[2],\"b\":\"v\",\"a\":3}", (true, true, false, false), "{\"a\":3,\"B\":\"x\",\"y\":[2],\"b\":\"v\"}"),
+  ("pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra", "extra_allow", "{\"y\":[2],\"b\":\"v\",\"a\":3}", (false, true, false, false), "{\"a\":3,\"b\":\"x\",\"y\":[2],\"b\":\"v\"}")
 ]
 
 /-- (type tag, `TypeAdapter(T).json_schema()`, compact) -/
