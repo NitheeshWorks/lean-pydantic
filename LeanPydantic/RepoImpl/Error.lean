@@ -17,6 +17,12 @@ namespace LeanPydantic
 
 open LeanJson (Json Number Decimal)
 
+/-- A context value as pydantic-core formats it into a message. -/
+def displayValue : Json → String
+  | .str s => s
+  | .num n => Num.display n
+  | j => toString j
+
 namespace ErrorKind
 
 /-- The pydantic error `type`. -/
@@ -24,6 +30,7 @@ def type : ErrorKind → String
   | .missing => "missing"
   | .modelType _ => "model_type"
   | .modelAttributesType => "model_attributes_type"
+  | .isInstanceOf _ => "is_instance_of"
   | .jsonInvalid _ => "json_invalid"
   | .intType => "int_type"
   | .intParsing => "int_parsing"
@@ -63,12 +70,13 @@ def type : ErrorKind → String
 def ctx : ErrorKind → List (String × Json)
   | .modelType c => [("class_name", .str c)]
   | .modelAttributesType => []
+  | .isInstanceOf c => [("class", .str c)]
   | .jsonInvalid e => [("error", .str e)]
-  | .greaterThan n => [("gt", .num n)]
-  | .greaterThanEqual n => [("ge", .num n)]
-  | .lessThan n => [("lt", .num n)]
-  | .lessThanEqual n => [("le", .num n)]
-  | .multipleOf n => [("multiple_of", .num n)]
+  | .greaterThan n => [("gt", n)]
+  | .greaterThanEqual n => [("ge", n)]
+  | .lessThan n => [("lt", n)]
+  | .lessThanEqual n => [("le", n)]
+  | .multipleOf n => [("multiple_of", n)]
   | .stringTooShort n => [("min_length", .num (.int n))]
   | .stringTooLong n => [("max_length", .num (.int n))]
   | .stringPatternMismatch p => [("pattern", .str p)]
@@ -99,6 +107,7 @@ def message (mode : InputMode) : ErrorKind → String
     | .python => "Input should be a valid dictionary or instance of " ++ c
     | .json => "Input should be an object"
   | .modelAttributesType => "Input should be a valid dictionary or object to extract fields from"
+  | .isInstanceOf c => "Input should be an instance of " ++ c
   | .jsonInvalid e => "Invalid JSON: " ++ e
   | .intType => "Input should be a valid integer"
   | .intParsing => "Input should be a valid integer, unable to parse string as an integer"
@@ -110,11 +119,11 @@ def message (mode : InputMode) : ErrorKind → String
   | .boolType => "Input should be a valid boolean"
   | .boolParsing => "Input should be a valid boolean, unable to interpret input"
   | .stringType => "Input should be a valid string"
-  | .greaterThan n => "Input should be greater than " ++ Num.display n
-  | .greaterThanEqual n => "Input should be greater than or equal to " ++ Num.display n
-  | .lessThan n => "Input should be less than " ++ Num.display n
-  | .lessThanEqual n => "Input should be less than or equal to " ++ Num.display n
-  | .multipleOf n => "Input should be a multiple of " ++ Num.display n
+  | .greaterThan n => "Input should be greater than " ++ displayValue n
+  | .greaterThanEqual n => "Input should be greater than or equal to " ++ displayValue n
+  | .lessThan n => "Input should be less than " ++ displayValue n
+  | .lessThanEqual n => "Input should be less than or equal to " ++ displayValue n
+  | .multipleOf n => "Input should be a multiple of " ++ displayValue n
   | .stringTooShort n =>
     "String should have at least " ++ Num.display (.int n) ++ " character" ++ plural (.int n)
   | .stringTooLong n =>
@@ -168,6 +177,7 @@ def template (mode : InputMode) (type : String) : List Piece :=
     | .python => [.lit "Input should be a valid dictionary or instance of ", .var "class_name"]
     | .json => [.lit "Input should be an object"]
   | "model_attributes_type" => [.lit "Input should be a valid dictionary or object to extract fields from"]
+  | "is_instance_of" => [.lit "Input should be an instance of ", .var "class"]
   | "json_invalid" => [.lit "Invalid JSON: ", .var "error"]
   | "int_type" => [.lit "Input should be a valid integer"]
   | "int_parsing" => [.lit "Input should be a valid integer, unable to parse string as an integer"]
@@ -213,11 +223,6 @@ def template (mode : InputMode) (type : String) : List Piece :=
   | "extra_forbidden" => [.lit "Extra inputs are not permitted"]
   | _ => []
 
-/-- A context value as pydantic-core formats it into a message. -/
-def displayValue : Json → String
-  | .str s => s
-  | .num n => Num.display n
-  | j => toString j
 
 /-- The first value under `k`. -/
 def ctxLookup (k : String) : List (String × Json) → Option Json

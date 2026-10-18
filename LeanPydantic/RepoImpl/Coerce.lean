@@ -160,6 +160,23 @@ def strAsFloat (s : String) : Except ErrorKind Decimal :=
   | some none => .error .finiteNumber
   | none => .error .floatParsing
 
+/-- pydantic-core's `str_as_float` for a plain `float` (`allow_inf_nan=True`):
+the number, `NaN` and the infinities included. -/
+def strAsNumber (s : String) : Except ErrorKind Number :=
+  let classify (cs : List Char) (r : Option (Option Decimal)) : Option Number :=
+    r.map fun
+      | some d => .float d
+      | none =>
+        let low := String.ofList (cs.map Char.toLower)
+        if low.endsWith "nan" then .nan else if cs.head? = some '-' then .negInf else .inf
+  let t := trim s.toList
+  let res := match classify t (rustFloat? t) with
+    | some r => some r
+    | none => stripUnderscores s.toList >>= fun u => classify u (rustFloat? u)
+  match res with
+  | some n => .ok n
+  | none => .error .floatParsing
+
 /-- pydantic-core's `str_as_bool`. -/
 def strAsBool (s : String) : Except ErrorKind Bool :=
   let l := String.ofList (s.toList.map Char.toLower)

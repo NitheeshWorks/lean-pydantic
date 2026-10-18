@@ -40,6 +40,9 @@ inductive ErrorKind where
   /-- `model_attributes_type`: the input for a model is not an object, when
   validating with `from_attributes` (Python mode only). -/
   | modelAttributesType
+  /-- `is_instance_of`: strict Python-mode validation wants an instance of
+  the class (`Decimal`), which no JSON value is. -/
+  | isInstanceOf (cls : String)
   /-- `json_invalid`: `model_validate_json` was given text that is not JSON. -/
   | jsonInvalid (error : String)
   | intType
@@ -52,11 +55,11 @@ inductive ErrorKind where
   | boolType
   | boolParsing
   | stringType
-  | greaterThan (gt : Number)
-  | greaterThanEqual (ge : Number)
-  | lessThan (lt : Number)
-  | lessThanEqual (le : Number)
-  | multipleOf (multipleOf : Number)
+  | greaterThan (gt : Json)
+  | greaterThanEqual (ge : Json)
+  | lessThan (lt : Json)
+  | lessThanEqual (le : Json)
+  | multipleOf (multipleOf : Json)
   | stringTooShort (minLength : Nat)
   | stringTooLong (maxLength : Nat)
   | stringPatternMismatch (pattern : String)

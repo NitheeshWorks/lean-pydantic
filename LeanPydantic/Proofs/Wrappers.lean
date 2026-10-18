@@ -128,6 +128,11 @@ plus `c`'s keywords. -/
 theorem check_withKeywords (s : Schema) (kws : List Keyword) (j : Json) (h : s.check j = true)
     (hk : ∀ k ∈ kws, k.check j = true) : (s.withKeywords kws).check j = true := by
   cases s <;> simp_all [Schema.withKeywords, Schema.check, List.all_eq_true]
+  case anyOf ss =>
+    rw [checkAny_iff] at h ⊢
+    obtain ⟨s, hs, hc⟩ := h
+    refine ⟨s.numberWith kws, List.mem_map_of_mem hs, ?_⟩
+    cases s <;> simp_all [Schema.numberWith, Schema.check, List.all_eq_true]
   case array =>
     cases j with
     | arr xs => cases xs; simp_all [Schema.check, List.all_eq_true]

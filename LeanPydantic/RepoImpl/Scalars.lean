@@ -44,7 +44,7 @@ def int (strict : Bool) : Json → Except ErrorKind Int
 /-- pydantic's `NonNegativeInt`: an `int`, then `ge=0`. -/
 def nat (strict : Bool) (j : Json) : Except ErrorKind Nat :=
   match int strict j with
-  | .ok i => if 0 ≤ i then .ok i.toNat else .error (.greaterThanEqual (.int 0))
+  | .ok i => if 0 ≤ i then .ok i.toNat else .error (.greaterThanEqual (.num (.int 0)))
   | .error k => .error k
 
 /-- pydantic's `FiniteFloat` validator (`float` with `allow_inf_nan=False`),

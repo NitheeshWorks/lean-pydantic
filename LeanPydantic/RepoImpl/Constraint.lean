@@ -100,7 +100,7 @@ namespace Constrained
 /-- The instance for a numeric type with order `O` and divisibility `D`,
 from how a bound appears in an error's `ctx` and in the schema. -/
 @[instance_reducible] def numeric {α : Type} (O : Keel.Ordered α) (D : Keel.Divisible α)
-    (ctx schema : α → Number) : Constrained α where
+    (ctx : α → Json) (schema : α → Number) : Constrained α where
   error
     | @Constraint.gt _ _ b, _ => .greaterThan (ctx b)
     | @Constraint.ge _ _ b, _ => .greaterThanEqual (ctx b)
@@ -122,11 +122,11 @@ from how a bound appears in an error's `ctx` and in the schema. -/
 
 end Constrained
 
-instance : Constrained Int := Constrained.numeric inferInstance inferInstance .int .int
-instance : Constrained Nat := Constrained.numeric inferInstance inferInstance (fun n => .int n) (fun n => .int n)
+instance : Constrained Int := Constrained.numeric inferInstance inferInstance (fun b => .num (.int b)) .int
+instance : Constrained Nat := Constrained.numeric inferInstance inferInstance (fun n => .num (.int n)) (fun n => .int n)
 /-- A `float` bound: a float in the error context (`{"gt": 0.0}`), as written
 in the schema (`"exclusiveMinimum": 0`). -/
-instance : Constrained Decimal := Constrained.numeric inferInstance inferInstance .float Num.ofDecimal
+instance : Constrained Decimal := Constrained.numeric inferInstance inferInstance (fun d => .num (.float d)) Num.ofDecimal
 
 instance constrainedString : Constrained String where
   error

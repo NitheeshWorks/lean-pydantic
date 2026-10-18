@@ -128,7 +128,7 @@ instance : NonNull String := ⟨fun _ _ => nofun⟩
 /-- The keywords of a numeric type's atoms hold on a number `n` whenever the
 type's relations on the validated value carry over to `n`. -/
 theorem numeric_keywords_sound {α : Type} {O : Keel.Ordered α} {D : Keel.Divisible α}
-    {ctx schema : α → Number} {x : α} {n : Number} (hfin : n.isFinite = true)
+    {ctx : α → Json} {schema : α → Number} {x : α} {n : Number} (hfin : n.isFinite = true)
     (hgt : ∀ b, @LT.lt α O.toLT b x → Num.lt (schema b) n)
     (hge : ∀ b, @LE.le α O.toLE b x → Num.le (schema b) n)
     (hlt : ∀ b, @LT.lt α O.toLT x b → Num.lt n (schema b))

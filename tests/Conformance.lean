@@ -170,6 +170,12 @@ def dispatch (tag : String) : Option ((String → Bool → String → String) ×
   | "opt_union" => r (Option (Int ⊕ String))
   | "tuple_isb" => r (Int × String × Bool)
   | "tuple_is" => r (Int × String)
+  | "decimal" => r PyDecimal
+  | "plain_float" => r Float
+  | "float_gt0" => r (Float ∣ gt 0)
+  | "condecimal_5_2" => r (Condecimal (some 5) (some 2))
+  | "condecimal_gt0_3" => r (Condecimal (some 3) none ∣ gt 0)
+  | "condecimal_places1_mult" => r (Condecimal none (some 1) ∣ multipleOf 0.5 ∧ le 10)
   | _ => none
 
 /-- Validate `input`, then `model_dump_json` it with the given options and

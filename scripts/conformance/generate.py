@@ -14,6 +14,7 @@ input `json.loads` would change (huge or over-precise floats) are not
 generated.
 """
 import json, sys
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Literal, Optional, Union
 from pydantic import BaseModel, Field, FiniteFloat, NonNegativeInt, TypeAdapter, ValidationError, constr
@@ -95,6 +96,12 @@ TYPES = {
     'opt_union': Optional[Union[int, str]],
     'tuple_isb': tuple[int, str, bool],
     'tuple_is': tuple[int, str],
+    'decimal': Decimal,
+    'plain_float': float,
+    'float_gt0': Annotated[float, Field(gt=0)],
+    'condecimal_5_2': Annotated[Decimal, Field(max_digits=5, decimal_places=2)],
+    'condecimal_gt0_3': Annotated[Decimal, Field(gt=0, max_digits=3)],
+    'condecimal_places1_mult': Annotated[Decimal, Field(decimal_places=1, multiple_of=Decimal('0.5'), le=10)],
 }
 
 PC = 'pydantic-core/tests/validators/'
@@ -190,7 +197,28 @@ ROWS += [
     ('tuple_is', TUPLE_IN, PC + 'test_tuple.py::test_tuple_json'),
 ]
 
+DECIMAL_IN = ['1.5', '"1.5"', '123.456', '1234.5', '"abc"', '12345.6', '1e3', '0.001', '"NaN"', '"Infinity"',
+              '"-inf"', '"snan"', 'true', 'null', '[1]', '"  2.50 "', '100', '1.10', '-0.0', '0.0', '"1_000"', '"1__0"',
+              '"_1"', '0.00100', '"1e3"', '"1E-7"', '"-0.000"', '"+5."', '".5"', '"."', '"1e"', '1e-7', '1.5e-5', '1e16',
+              '123456789', '-12.5', '"00012.30"', '0.5', '9.5', '10.5', '10', '"7.25"', '"1.2e2"']
+FLOAT_PLAIN_IN = ['1.5', '1', '-0.0', '1e400', '-1e400', 'NaN', 'Infinity', '-Infinity', '"nan"', '"NaN"', '"inf"',
+                  '"-inf"', '"+Infinity"', '"-infinity"', '"1_0.5"', '" 2.5 "', '"x"', 'true', 'false', 'null', '[1]',
+                  '0.1', '1e16', '1e-7', '123456789012345678', '0.30000000000000004', '5e-324', '1.7976931348623157e308']
+ROWS += [
+    ('plain_float', FLOAT_PLAIN_IN, PC + 'test_float.py::test_float_inf_nan'),
+    # an out-of-range literal is reported as written (pydantic: as the float, -Infinity): traceability
+    ('float_gt0', [t for t in FLOAT_PLAIN_IN if t != '-1e400'], PC + 'test_float.py::test_float_kwargs'),
+]
+ROWS += [
+    ('decimal', DECIMAL_IN, PC + 'test_decimal.py::test_decimal'),
+    ('condecimal_5_2', DECIMAL_IN, PC + 'test_decimal.py::test_decimal_digits'),
+    ('condecimal_gt0_3', DECIMAL_IN, PC + 'test_decimal.py::test_decimal_kwargs'),
+    ('condecimal_places1_mult', DECIMAL_IN, PC + 'test_decimal.py::test_decimal_multiple_of'),
+]
+
 STRICT_ROWS = [
+    ('decimal', ['1.5', '"1.5"', '1', 'true'], PC + 'test_decimal.py::test_decimal_strict_py'),
+    ('plain_float', ['1.5', '1', '"1.5"', 'true', 'NaN'], PC + 'test_float.py::test_float_strict'),
     ('int', ['1', '"1"', '1.0', 'true', 'null'], PC + 'test_int.py::test_int_strict'),
     ('float', ['1', '1.5', '"1.5"', 'true'], PC + 'test_float.py::test_float_strict'),
     ('bool', ['true', '"true"', '1'], PC + 'test_bool.py::test_bool_strict'),

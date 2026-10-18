@@ -55,6 +55,11 @@ inductive Schema where
   | annotated (s : Schema) (title : Option String) (default : Option Json)
   deriving Inhabited
 
+/-- A number schema with more keywords; any other schema as it is. -/
+def Schema.numberWith (kws : List Keyword) : Schema → Schema
+  | .number k => .number (k ++ kws)
+  | s => s
+
 /-- The same schema with more keywords (for a refinement of a scalar). -/
 def Schema.withKeywords (s : Schema) (kws : List Keyword) : Schema :=
   match s with
@@ -62,6 +67,8 @@ def Schema.withKeywords (s : Schema) (kws : List Keyword) : Schema :=
   | .number k => .number (k ++ kws)
   | .string k => .string (k ++ kws)
   | .array i k => .array i (k ++ kws)
+  -- `Decimal`'s `number | string`: pydantic constrains the number
+  | .anyOf ss => .anyOf (ss.map (Schema.numberWith kws))
   | s => s
 
 end LeanPydantic
