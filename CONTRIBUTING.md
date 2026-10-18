@@ -97,7 +97,7 @@ Listed here with the reason, and in `docs/traceability.toml` with
 * **The JSON-text round trip** (`model_validate_json (model_dump_json a)`):
   it rests on lean-json's `from_json_to_json`; tested in `Props`.
 * **The pattern parser** (`Regex.compile`): Rust's regex syntax has no
-  independent grammar to prove against; 4573 pattern-and-input cases are run
+  independent grammar to prove against; 11701 pattern-and-input cases are run
   through pydantic. The matcher it produces is Keel's (`Keel.Regex`), proved
   there and restated for this dialect in `Proofs/Regex.lean`.
 * **`Float`**: Lean's float operations are opaque externs, so the parse/print
@@ -119,8 +119,12 @@ Listed here with the reason, and in `docs/traceability.toml` with
 * `multiple_of` on a `PyDecimal` is exact; Python divides at 28 digits and
   rejects any value whose quotient is wider (UP-055, pydantic#13970).
 * `PySet` dumps in input order (Python: hash order).
-* `pattern` rejects inline flags, `\p{..}`, POSIX classes and `\b{..}` at
-  compile time; Rust accepts them.
+* `pattern` rejects `\p{..}` at compile time, and three things Keel's
+  assertions cannot express yet: `^` and `$` under `(?m)` (line anchors), the
+  word assertions under `(?-u)` (ASCII word characters), and
+  `\b{start-half}` and `\b{end-half}`; Rust accepts them. A flag directive
+  `(?flags)` counts one level against the nesting bound of 250 (Rust counts
+  none), which keeps the parser's native stack bounded.
 * `pattern` size is bounded by `Regex.maxLeaves` (10000 character classes
   once repetitions are expanded), not by Rust's 10 MiB compiled-program limit,
   which is measured on Rust's own program: `(\w{1,30}\s?){1,20}x` compiles

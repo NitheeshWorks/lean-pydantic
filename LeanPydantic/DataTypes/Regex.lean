@@ -8,8 +8,8 @@ pydantic checks `pattern` with Rust's `regex` crate (its default
 to a `Keel.Regex` over this dialect's character classes: Keel supplies the
 terms, their meaning and the linear-time matcher (`Keel.Regex`), and this
 repository keeps the Rust dialect: its atoms (`\d`, `\w`, `\s` with Rust's
-Unicode tables, `.` without `\n`), its word characters, and its parser
-(`RepoImpl/Regex/Parse.lean`).
+Unicode tables, `.` without `\n`, Rust's simple case folding for `(?i)`), its
+word characters, and its parser (`RepoImpl/Regex/Parse.lean`).
 -/
 
 namespace LeanPydantic.Regex
@@ -22,6 +22,13 @@ inductive Atom where
   | range (lo hi : Char)
   /-- `.`: any character but `\n`. -/
   | dot
+  /-- `.` under `(?s)`: any character. -/
+  | any
+  /-- `.` under `(?R)`: any character but `\n` and `\r`. -/
+  | dotCRLF
+  /-- A range under `(?i)`: a character with a simple case variant (itself
+  included) in `lo-hi`. -/
+  | caseless (lo hi : Char)
   /-- `\d`: a Unicode decimal digit. -/
   | digit
   /-- `\w`: a Unicode word character. -/

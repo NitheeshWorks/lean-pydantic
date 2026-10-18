@@ -61,7 +61,9 @@ costs no more than a passing one (0.02-0.04 ms per call, both under the
 0.1 ms bound; pydantic-core 0.5 us passing, 0.9-1.0 us failing).
 pydantic-core (Rust `regex`): the email-like pattern 0.001 ms per call,
 `^(a{1,50})+$` on 1000 characters 0.003 ms, `[ab]*a[ab]{100}c` on 20 000
-random characters 22 ms, `(\w{1,10}\s?){1,10}x` 0.058 ms per call.
+random characters 22 ms, `(\w{1,10}\s?){1,10}x` 0.058 ms per call, the
+`(?ix)` email-like pattern 0.0003 ms per call, `(?is)^a.*k$` on 100 000
+characters 0.39 ms.
 -/
 
 open LeanPydantic
@@ -97,6 +99,10 @@ def widePat : Keel.Pattern := Regex.ofSource "(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b
 def emailPat : Keel.Pattern := Regex.ofSource "^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,255}\\.[a-z]{2,63}$"
 def thrashPat : Keel.Pattern := Regex.ofSource "[ab]*a[ab]{100}c"
 def wordsPat : Keel.Pattern := Regex.ofSource "(\\w{1,10}\\s?){1,10}x"
+/-- The email-like pattern under `(?ix)`: case-insensitive, laid out with spaces. -/
+def emailCiPat : Keel.Pattern := Regex.ofSource "(?ix) ^ [a-z0-9._%+-]{1,64} @ [a-z0-9.-]{1,255} \\. [a-z]{2,63} $"
+/-- `(?is)`: `.` across lines, and `k` matching K and the Kelvin sign. -/
+def dotAllPat : Keel.Pattern := Regex.ofSource "(?is)^a.*k$"
 /-- Over Rust's compiled-size limit (pydantic: `SchemaError`), accepted here. -/
 def bigWordsPat : Keel.Pattern := Regex.ofSource "(\\w{1,30}\\s?){1,20}x"
 
@@ -154,7 +160,13 @@ def benches : List Bench :=
   let upper := emails.map fun e => e ++ "M"
   let longLocal := (List.range 1000).map fun i =>
     String.ofList (List.replicate 60 'y') ++ toString (10000 + i) ++ "@mail.example-domain.com"
+  let emailCi := emailCiPat.test
+  let lines (n : Nat) : String := String.join ((List.range (n / 10)).map fun i => if i % 2 = 0 then "abcd\nefg\r\n" else "ABCD\u212aXYZ ")
   [⟨"pattern email-like, 1000 calls on 64 characters (0.1 ms per call)", 100, emails, fun l => l.all email⟩,
+    ⟨"pattern (?ix) email-like, upper case, 1000 calls on 64 characters (0.1 ms per call)", 100, emails.map String.toUpper, fun l => l.all emailCi⟩,
+    ⟨"pattern (?ix) email-like, upper case, failing (no @), 1000 calls (0.1 ms per call)", 100, noAt.map String.toUpper, fun l => !l.any emailCi⟩,
+    ⟨"pattern (?is)^a.*k$ on 100 000 characters across lines", 50, "A" ++ lines 100000 ++ "\u212a", fun s => dotAllPat.test s⟩,
+    ⟨"pattern (?is)^a.*k$ on 100 000 characters across lines, failing (j at the end)", 50, "A" ++ lines 100000 ++ "j", fun s => !dotAllPat.test s⟩,
     ⟨"pattern email-like, failing (no @), 1000 calls (0.1 ms per call)", 100, noAt, fun l => !l.any email⟩,
     ⟨"pattern email-like, failing (one-letter TLD), 1000 calls (0.1 ms per call)", 100, badTld, fun l => !l.any email⟩,
     ⟨"pattern email-like, failing (upper case at the end), 1000 calls (0.1 ms per call)", 100, upper, fun l => !l.any email⟩,
@@ -175,6 +187,10 @@ def benches : List Bench :=
       match Regex.compile src with
       | .ok r => (Regex.Regex.Nfa.build r).isSome
       | .error _ => true⟩,
+    ⟨"compile the (?ix) email-like pattern", 200, "(?ix) ^ [a-z0-9._%+-]{1,64} @ [a-z0-9.-]{1,255} \\. [a-z]{2,63} $", fun src =>
+      match Regex.compile src with
+      | .ok r => (Regex.Regex.Nfa.build r).isSome
+      | .error _ => false⟩,
     ⟨"compile the email-like pattern", 200, "^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,255}\\.[a-z]{2,63}$", fun src =>
       match Regex.compile src with
       | .ok r => (Regex.Regex.Nfa.build r).isSome

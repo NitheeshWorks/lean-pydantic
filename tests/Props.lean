@@ -231,6 +231,35 @@ def properties : List Property := [
       | .finite d' => d' == d
       | _ => false)
     (fun d => s!"{repr d} printed {d.toPy}"),
+  -- (?i) is Rust's simple case folding: a literal matches any case variant of
+  -- each of its characters (K and the Kelvin sign, s and the long s), and
+  -- without (?i) only itself
+  prop "regex (?i): a literal matches its case variants, and only them"
+    (fun r =>
+      let orbits : List (List Char) :=
+        [['a', 'A'], ['k', 'K', '\u212a'], ['s', 'S', '\u017f'], ['é', 'É'], ['σ', 'Σ', 'ς'], ['1'], ['_']]
+      let (n, r) := r.nat 12
+      (List.range (n + 1)).foldl (fun ((p, t), r) _ =>
+        let (o, r) := r.pick orbits
+        let (a, r) := r.pick o
+        let (b, r) := r.pick o
+        ((p.push a, t.push b), r)) (("", ""), r))
+    (fun (p, t) => match Regex.compile ("(?i)^" ++ p ++ "$"), Regex.compile ("^" ++ p ++ "$") with
+      | .ok ci, .ok cs => ci.search t && cs.search t == (p == t)
+      | _, _ => false)
+    (fun (p, t) => s!"{repr p} on {repr t}"),
+  -- (?x) ignores white space and comments between tokens, and (?-x) ends it
+  prop "regex (?x): white space and comments between tokens are ignored"
+    (fun r =>
+      let (n, r) := r.nat 10
+      (List.range (n + 1)).foldl (fun ((p, t), r) _ =>
+        let (c, r) := r.pick ['a', 'b', '1', '_']
+        let (gap, r) := r.pick [" ", "", "\t", " # note\n", "\n  "]
+        ((p ++ gap ++ c.toString, t.push c), r)) (("", ""), r))
+    (fun (p, t) => match Regex.compile ("(?x)^" ++ p ++ "$"), Regex.compile ("(?x)^" ++ p ++ "(?-x) $") with
+      | .ok r1, .ok r2 => r1.search t && !r1.search (t ++ "a") && r2.search (t ++ " ") && !r2.search t
+      | _, _ => false)
+    (fun (p, t) => s!"{repr p} on {repr t}"),
   -- the regex scan's state never exceeds the pattern's class count plus one
   prop "regex: no backtracking, bounded state on random text"
     (fun r =>

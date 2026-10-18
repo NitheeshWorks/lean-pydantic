@@ -353,21 +353,21 @@ notes = "print_parse_float is tested (random bit patterns through toBits), not p
 [[requirement]]
 id = "regex.pattern"
 upstream = "pydantic/tests/test_types.py::test_pattern"
-title = "pattern: Rust regex syntax, unanchored search, linear time, Unicode \\d \\w \\s"
+title = "pattern: Rust regex syntax (inline flags, POSIX classes, simple case folding), unanchored search, linear time, Unicode \\d \\w \\s"
 status = "implemented"
 realises = ["LeanPydantic.Regex.compile", "LeanPydantic.Regex.Regex.search", "LeanPydantic.Regex.ofSource", "Keel.Regex.compile"]
 theorem = ["LeanPydantic.Regex.Regex.derive_correct", "LeanPydantic.Regex.Regex.search_correct", "LeanPydantic.Regex.Regex.Nfa.search_eq", "LeanPydantic.Regex.Regex.pd_eq_lin", "LeanPydantic.Regex.Regex.reach_length_le", "LeanPydantic.Regex.ofSource_test", "LeanPydantic.Regex.Regex.search_iff_accepts", "LeanPydantic.theVerifiedRegex"]
 test = ["tests/Conformance.lean::regexCases", "tests/Props.lean::properties"]
-notes = "The parser is tested against pydantic (4573 cases). The matcher is Keel.Regex (lean-keel), over this dialect's classes (CharClass Atom: Rust's Unicode \\d \\w \\s tables, \\w as the word test); its laws are restated here for the Rust dialect, against the semantics in Specifications/Regex.lean (Search is Keel's Accepts in Mode.search, search_iff_accepts)."
+notes = "The parser follows regex-syntax's grammar and is tested against pydantic (11701 cases: flags i m s x R u U set by (?flags) for the rest of the group or by (?flags:..), POSIX classes, (?i) as Rust's simple case folding from a table measured on pydantic, (?-u) classes over bytes with Rust's refusals; a random differential run of 110000 more agreed). The matcher is Keel.Regex (lean-keel), over this dialect's classes (CharClass Atom: Rust's Unicode \\d \\w \\s tables, \\w as the word test); its laws are restated here for the Rust dialect, against the semantics in Specifications/Regex.lean (Search is Keel's Accepts in Mode.search, search_iff_accepts)."
 
 [[requirement]]
 id = "regex.unsupported-syntax"
 upstream = "pydantic/tests/test_types.py::test_pattern"
-title = "Inline flags, \\p{..}, POSIX classes and \\b{..}"
+title = "\\p{..}; ^ and $ under (?m); word assertions under (?-u); \\b{start-half} and \\b{end-half}"
 status = "deviation"
-realises = ["LeanPydantic.Regex.Parse.group"]
+realises = ["LeanPydantic.Regex.Parse.escape", "LeanPydantic.Regex.Parse.anchor", "LeanPydantic.Regex.Parse.assertion", "LeanPydantic.Regex.Parse.wordBoundary", "LeanPydantic.Regex.Parse.alts"]
 test = ["tests/Conformance.lean::unsupportedPatterns"]
-notes = "Rejected at compile time with an error; Rust's regex accepts them."
+notes = "Rejected at compile time with an error; Rust's regex accepts them. The last three need assertions Keel.Regex does not have yet (line starts and ends, with and without CRLF; ASCII word boundaries; half word boundaries). Everything else Rust accepts is accepted (inline flags, POSIX classes, \\b{start} and \\b{end}). A flag directive (?flags) counts one level against the nesting bound of 250 (Rust counts none), which keeps the parser's native stack bounded."
 
 [[requirement]]
 id = "regex.size-limit"

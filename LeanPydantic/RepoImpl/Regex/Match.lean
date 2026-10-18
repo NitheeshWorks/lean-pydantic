@@ -33,6 +33,38 @@ where
         | none => false
       else false
 
+/-- The value paired with `n` in a table of pairs sorted by their first
+component (binary search). -/
+def lookup (t : Array (Nat × Nat)) (n : Nat) : Option Nat :=
+  go 0 t.size 32
+where
+  /-- At most 32 halvings, as in `inRanges`. -/
+  go (lo hi : Nat) : Nat → Option Nat
+    | 0 => none
+    | fuel + 1 =>
+      if lo < hi then
+        let mid := (lo + hi) / 2
+        match t[mid]? with
+        | some (a, b) =>
+          if n < a then go lo mid fuel
+          else if a < n then go (mid + 1) hi fuel
+          else some b
+        | none => none
+      else none
+
+/-- The simple case variants of `c` other than `c` itself (Rust's simple case
+folding: at most three), by following its orbit in `Unicode.foldNext`. -/
+def caseVariants (c : Char) : List Nat :=
+  go c.toNat 3
+where
+  /-- The orbit after `m`, until it returns to `c`. -/
+  go (m : Nat) : Nat → List Nat
+    | 0 => []
+    | fuel + 1 =>
+      match lookup Unicode.foldNext m with
+      | some m' => if m' = c.toNat then [] else m' :: go m' fuel
+      | none => []
+
 /-- `\w` -/
 def isWord (c : Char) : Bool :=
   if c.toNat < 128 then c.isAlphanum || c == '_' else inRanges Unicode.word c.toNat
@@ -49,6 +81,10 @@ def Atom.test : Atom → Char → Bool
   | .char a, c => c == a
   | .range lo hi, c => lo ≤ c && c ≤ hi
   | .dot, c => c != '\n'
+  | .any, _ => true
+  | .dotCRLF, c => c != '\n' && c != '\r'
+  | .caseless lo hi, c =>
+    (lo ≤ c && c ≤ hi) || (caseVariants c).any fun m => lo.toNat ≤ m && m ≤ hi.toNat
   | .digit, c => isDigit c
   | .word, c => isWord c
   | .space, c => isSpace c

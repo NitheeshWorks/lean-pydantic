@@ -410,10 +410,12 @@ def dumpCases : List Case :=
         | some f => check expected (f input o) }
 
 /-- Patterns lean-pydantic rejects though Rust's `regex` accepts them
-(documented in docs/traceability.toml, `regex.unsupported-syntax`): inline
-flags, Unicode property classes, POSIX classes and `\b{..}`. -/
+(documented in docs/traceability.toml, `regex.unsupported-syntax`): Unicode
+property classes, `^` and `$` under `(?m)`, the word assertions under `(?-u)`,
+and `\b{start-half}` and `\b{end-half}`. -/
 def unsupportedPatterns : List String :=
-  ["(?i)ab", "(?s).", "\\p{L}", "^\\p{L}$", "[[:alpha:]]", "\\b{start}a"]
+  ["\\p{L}", "^\\p{L}$", "(?m)^b", "(?m)a$", "(?mR)^b", "(?-u)\\b", "(?-u)\\B", "(?-u)\\<a",
+   "\\b{start-half}a", "\\b{end-half}"]
 
 def regexCases : List Case :=
   regexTable.map fun (pat, input, expected) =>

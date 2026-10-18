@@ -417,6 +417,59 @@ for p in REGEX_PATTERNS:
         if res == 'error':
             break
 
+# Inline flags, POSIX classes, case folding, (?-u) and the corners of Rust's
+# class and escape grammar, on inputs that tell them apart.
+REGEX_FLAG_INPUTS = ['', 'a', 'A', 'b', 'ab', 'AB', 'Ab', 'abc', 'AbC', 'a b', 'a\nb', 'a\r\nb', 'a\rb', '\r',
+                     'k', 'K', '\u212a', 'S', '\u017f', 'é', 'É', 'ß', '\u1e9e', 'Σ', 'ς', 'ǅ', 'ı', 'I',
+                     '1', '_', '-', ':', '#', ' ', '\t', 'aa', 'aaa', ']', '[', '😀']
+REGEX_FLAG_PATTERNS = [
+    # flag syntax and scope
+    '(?i)abc', '(?i:a)b', '(?i)a(?-i)b', '(?i)(a(?-i)b)c', '(?i:a(?-i)b)c', 'a|(?i)b|c', '(?i)', '(?i)|a',
+    'a(?i)|B', '(?:(?i)a)a', '(?i)(?:a|(?-i)b)|c', '(?i-i)a', '(?ii)a', '(?-)a', '(?i-)a', '(?-i-s)a', '(?z)a',
+    '(?)a', '(?i)*', 'x(?i)*', '(?i)?', '(?i){2}', '(?i:)', '(?-i:)', '(?i)(?i)a', '(?U)a+', '(?U)a+?', '(?-U)a',
+    '(?i-U)a', '(?u)a', '(?u:a)', '(?#x)', '(?P=n)', '(?=a)', '(?<=a)b', '(?<!a)b', '(?!a)', '(?i',
+    # case folding (Rust's simple case folding)
+    '(?i)k', '(?i)K', r'(?i)\x{212a}', '(?i)s', r'(?i)\u017f', '(?i)ß', '(?i)σ', '(?i)ς', '(?i)ǅ', '(?i)ı',
+    '(?i)i', '(?i)é', '(?i)[a-z]', '(?i)[k]', '(?i)[^k]', '(?i)[^a]', '(?i)[a-z&&[^k]]', '(?i)[k&&K]',
+    '(?i)[k--K]', '(?i)[k~~K]', r'(?i)\w', r'(?i)\W', r'(?i)[^\W]', r'(?i)\d', r'(?i)\x41', '(?i)[[:upper:]]',
+    '(?i)[[:lower:]]', '(?i)[[:^lower:]]', '(?i)^[a-z0-9_-]{3,16}$', '(?i)[[^k]&&[a-z]]', '(?i)😀',
+    # dot and line ends
+    '(?s).', '(?s)a.b', '(?is)a.b', '(?R).', '(?sR).', '(?R)a.b', '(?s:.)a', '(?s)(?-s).', '^.$', '(?R)^.$',
+    '(?m)^b', '(?m)a$', '(?mR)^b', '(?m)a', r'(?m)\Aa', r'(?m)\z', '(?m)(?-m)^a', '(?m:a)^b',
+    # (?x)
+    '(?x)a b', '(?x)a # c\nb', '(?x)a#c', '(?x)[a b]', '(?x)[ ^a]', '(?x)[a - c]', '(?x)[a#]\nb]', r'(?x)a\ b',
+    r'(?x)a\#b', '(?x)[#]', '(?x)a{ 2 , 3 }', '(?x)a {2}', 'a {2}', '(?x)a + ', '(?x)a+ ?', '(?x)a{2} ?',
+    '(?x)(?P< n>a)', '(?x)( ?:a)', '( ?:a)', '(?x)(? i)a', '(?x)(?i x)a', r'(?x)\x 41', r'(?x)\x{ 41 }',
+    r'(?x)\u00 41', '(?x)\\', '(?x)a\u3000b', '(?x)a\u200bb', '(?x)a\u2028b', '(?x)(?-x)a b', '(?x)a(?-x: b) c',
+    '(?x:a b)', '(?ix)A B', '(?x)[ ] ]', '(?x)[]', '(?x)[ ]', '(?x)[a& &b]', '(?x)[a - - b]', '(?x)[a- -b]',
+    r'(?x)\b{ start }a', r'(?x)\b {start}a', '(?x)a{1 0}', r'(?x)\d +', '(?x)[[:alpha: ]]', '(?x)[ [:alpha:] ]',
+    '(?x)(  a  )',
+    # POSIX classes
+    '[[:alpha:]]', '[[:^alpha:]]', '[[:alnum:]]', '[[:ascii:]]', '[[:blank:]]', '[[:cntrl:]]', '[[:digit:]]',
+    '[[:graph:]]', '[[:lower:]]', '[[:print:]]', '[[:punct:]]', '[[:space:]]', '[[:upper:]]', '[[:word:]]',
+    '[[:xdigit:]]', '[[:^space:]]', '[[:foo:]]', '[:alpha:]', '[[:alpha:]', '[[:alpha:]]]', '[[:alpha:]x]',
+    '[x[:digit:]]', '[[:alpha:][:digit:]]', '[^[:alpha:]]', '[[:alpha:]&&[:lower:]]', '[[:alpha:]--[:upper:]]',
+    '[a-[:alpha:]]', '[[:alpha:]-a]', r'[\d-[:alpha:]]', '[[:a]b:]]', '[[:^word:]]',
+    # leading `-` and `]`, empty operands
+    '[--a]', '[---a]', '[^-a]', '[]-a]', '[!-[]', '[a&&]', '[&&a]', '[a--]', '[-]', '[^-]', '[--]',
+    # (?-u)
+    '(?-u)a', '(?-u)é', r'(?-u)\x{e9}', r'(?-u)[\x{e9}]', '(?-u)[é]', r'(?-u)\xff', r'(?-u)\x41', r'(?-u)\d',
+    r'(?-u)\s', r'(?-u)\w', r'(?-u)\W', r'(?-u)[\w]', r'(?-u)[^\W]', '(?-u)[^a]', '(?-u).', '(?s-u).',
+    '(?-u)[[:alpha:]]', '(?-u)[[:^alpha:]]', r'(?-u)[^\x00-\xff]', r'(?-u)[\xff&&a]', '(?-u)[a-z--b]',
+    '(?-u)(?i)é', '(?-u)(?i)k', '(?i-u)[a-z]', r'(?-u)(?u:\w)', r'(?-u:\w)é', r'(?-u)\p{L}', '(?-u)$',
+    r'(?-u)\Aa', r'(?-u)\b', r'(?-u)\B', r'(?-u)\<a',
+    # special word boundaries, hex escapes, counts
+    r'\b{start}a', r'\b{end}', r'a\b{end}', r'\b{start-half}a', r'\b{end-half}', r'\b{word}', r'\b{ start}',
+    r'\b{2}', '\\b{', r'(?i)\b{start}A', r'\x{000000041}', r'\x{0000000041}', r'\x{100000000}', r'\x{110000}',
+    r'\x{d800}', 'a{\t2}', 'a{ 2, }', 'a{2 ,3}', 'a{\u30002}',
+]
+for p in REGEX_FLAG_PATTERNS:
+    for s in REGEX_FLAG_INPUTS:
+        res = regex_result(p, s)
+        regex_rows.append((p, s, res))
+        if res == 'error':
+            break
+
 print()
 CHUNK = 400
 chunks = [regex_rows[i:i + CHUNK] for i in range(0, len(regex_rows), CHUNK)]
