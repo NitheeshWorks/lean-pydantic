@@ -237,6 +237,24 @@ test = ["tests/Conformance.lean::tableCases", "tests/Conformance.lean::dumpCases
 notes = "Accepted keys follow pydantic-core: for Python input the keys the fields read (with populate_by_name the alias if present, else the name), for JSON text every alias and every field name. As in pydantic, under allow an extra named like an aliased field (Python input) marks that field set for exclude_unset. Deviation: a key repeated in JSON text gives one extra_forbidden (the last value; lean-json keeps the last duplicate), pydantic one per occurrence. populate_by_name with an alias, and forbid with an alias, keep LawfulFields (round trip, located errors, the forbid law) but have no LawfulModel (schema soundness): the schema pydantic emits rejects input its validator accepts (UP-065)."
 
 [[requirement]]
+id = "api.repr"
+upstream = "pydantic/tests/test_main.py::test_ultra_simple_repr"
+title = "repr(m) and str(m) of a model (fields, then extras under allow, at every level); repr of field values as Python writes them (floats, Decimal('1.5'), tuples, sets, enums)"
+status = "deviation"
+realises = ["LeanPydantic.PyRepr", "LeanPydantic.pyRepr", "LeanPydantic.pyReprJson", "LeanPydantic.pyFloatLayout", "LeanPydantic.Model.reprArgsIn", "LeanPydantic.Derive.mkModelCmds"]
+test = ["tests/Conformance.lean::reprCases", "tests/Conformance.lean::handCases"]
+notes = "Checked against repr()/str() of every validated value in the generated table. Deviations: a set shows its elements in input order (Python: hash order); a string escapes only the C0 and C1 controls, DEL, NBSP and the soft hyphen (Python's str.isprintable covers all of Unicode). Tested, not proved: a printer has no independent spec."
+
+[[requirement]]
+id = "api.error-str"
+upstream = "pydantic-core/tests/test_misc.py::test_validation_error_multiple"
+title = "str(ValidationError): count and title, each loc (dotted, a key with a dot in backticks), msg, type, input_value cut to 50 bytes at character boundaries, input_type, url; validator titles as pydantic-core names them (constrained-int, decimal, list[str], literal['a','b'], str-enum[Color])"
+status = "tested"
+realises = ["LeanPydantic.ValidationError.str", "LeanPydantic.ErrorDetails.pretty", "LeanPydantic.truncateRepr", "LeanPydantic.pyTypeName", "LeanPydantic.locDisplay"]
+test = ["tests/Conformance.lean::reprCases", "tests/Conformance.lean::handCases"]
+notes = "str(e) of every failing row of the generated table, byte for byte, and pydantic-core's test_unicode_error_input_repr. print(e) and toString e give it (e.json is the JSON form)."
+
+[[requirement]]
 id = "api.type-adapter"
 upstream = "pydantic/tests/test_type_adapter.py"
 title = "TypeAdapter(T): validate_python, validate_json, dump_python, dump_json, json_schema"

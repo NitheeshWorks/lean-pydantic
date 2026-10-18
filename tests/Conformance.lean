@@ -184,10 +184,34 @@ def runAs (α : Type) [FromJson α] [ToJson α] [JsonSchema α] (mode : String)
       | .error e => e.json
     | .error _ => "<input is not JSON>"
 
-/-- A type tag's validator and schema. -/
-def dispatch (tag : String) : Option ((String → Bool → String → String) × Json) :=
-  let r (α : Type) [FromJson α] [ToJson α] [JsonSchema α] :=
-    some (runAs α, (JsonSchema.schema α).document)
+/-- What `print` shows for a validated value: `repr(v)`, and `str(v)` for a
+model (with its extras under `extra='allow'`). -/
+class ShowValid (α : Type) [FromJson α] where
+  display : {cfg : Cfg} → {obj : Json} → String → Valid α cfg obj → String
+
+instance (priority := low) {α : Type} [FromJson α] [PyRepr α] : ShowValid α := ⟨fun _ v => pyRepr v.val⟩
+instance {α : Type} [Model α] : ShowValid α :=
+  ⟨fun out v => if out = "str" then toString v else pyRepr v⟩
+
+/-- Validate `input`, then `repr` (or `str`) the result, or `str(e)`. -/
+def reprAs (α : Type) [FromJson α] [ShowValid α] (mode : String) (strict : Bool) (out input : String) : String :=
+  if mode = "json" then
+    match validateJsonWith α strict input with
+    | .ok a => ShowValid.display out a.toValid
+    | .error e => toString e
+  else
+    match LeanJson.from_json input with
+    | .ok j =>
+      match validateWith α { strict } j.val with
+      | .ok a => ShowValid.display out a
+      | .error e => toString e
+    | .error _ => "<input is not JSON>"
+
+/-- A type tag's validator, schema, and `print` output. -/
+def dispatch (tag : String) :
+    Option ((String → Bool → String → String) × Json × (String → Bool → String → String → String)) :=
+  let r (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [ShowValid α] :=
+    some (runAs α, (JsonSchema.schema α).document, reprAs α)
   match tag with
   | "int" => r Int
   | "nat" => r Nat
@@ -280,7 +304,7 @@ def tableCases : List Case :=
       name := s!"{tag} {mode}{if strict then " strict" else ""} {input.take 40}"
       run := match dispatch tag with
         | none => pure false
-        | some (f, _) => check expected (f mode strict input) }
+        | some (f, _, _) => check expected (f mode strict input) }
 
 def schemaCases : List Case :=
   schemaTable.map fun (tag, expected) =>
@@ -288,7 +312,7 @@ def schemaCases : List Case :=
       name := s!"schema {tag}"
       run := match dispatch tag with
         | none => pure false
-        | some (_, s) => check expected (LeanJson.printStr s) }
+        | some (_, s, _) => check expected (LeanJson.printStr s) }
 
 /-- `M.model_validate_json(input)`, then `model_dump_json()` or the errors,
 as pydantic printed them. -/
@@ -316,6 +340,18 @@ def extraReport {cfg obj} (v : Valid ExtraAllow cfg obj) : String :=
 
 /-- Cases written out by hand, for behaviour the table does not reach. -/
 def handCases : List Case := [
+  { upstream := "pydantic-core/tests/test_misc.py::test_unicode_error_input_repr"
+    name := "str(ValidationError) cuts a long input's repr at a character boundary"
+    run := check "1 validation error for int\n  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='ÿÿÿÿÿÿÿÿÿÿÿÿ...ÿÿÿÿÿÿÿÿÿÿÿ', input_type=str]"
+      (match (TypeAdapter.new Int).validate_python (.str (String.ofList (List.replicate 1000 'ÿ'))) with
+        | .ok _ => "ok"
+        | .error e => e.str (include_url := false)) },
+  { upstream := "pydantic/tests/test_main.py::test_allow_extra_repr"
+    name := "repr and str of a model with extras, nested"
+    run := match ExtraNested.model_validate (json% {"inner": {"a": 1, "q": 2}}) with
+      | .ok v => check "ExtraNested(inner=ExtraAllow(a=1, b='x', q=2), f=None) inner=ExtraAllow(a=1, b='x', q=2) f=None"
+          (pyRepr v ++ " " ++ toString v)
+      | .error e => check "ok" e.str },
   { upstream := "pydantic/tests/test_main.py::test_allow_extra"
     name := "extra='allow': model_extra, model_fields_set and model_dump (a dict) by input mode"
     run := do
@@ -509,6 +545,14 @@ def handCases : List Case := [
         <&&> pure (e.error_count == 1 && e.title == "Offer") }
 ]
 
+def reprCases : List Case :=
+  reprTable.map fun (up, tag, mode, strict, out, input, expected) =>
+    { upstream := up
+      name := s!"{out} {tag} {mode}{if strict then " strict" else ""} {input.take 40}"
+      run := match dispatch tag with
+        | none => pure false
+        | some (_, _, g) => check expected (g mode strict out input) }
+
 def dumpCases : List Case :=
   dumpTable.map fun (up, tag, input, o, expected) =>
     { upstream := up
@@ -535,7 +579,7 @@ def regexCases : List Case :=
           | .error _ => "error"
         if pat ∈ unsupportedPatterns then check "error" got else check expected got }
 
-def cases : List Case := tableCases ++ schemaCases ++ dumpCases ++ handCases ++ regexCases ++ functionalCases
+def cases : List Case := tableCases ++ schemaCases ++ reprCases ++ dumpCases ++ handCases ++ regexCases ++ functionalCases
 
 def main (args : List String) : IO UInt32 := do
   let verbose := args.contains "-v"

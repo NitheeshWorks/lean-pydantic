@@ -93,6 +93,8 @@ and so is `User.model_json_schema`.
 | `Item.model_json_schema()` | `Item.model_json_schema` |
 | `TypeAdapter(int).validate_python('42')` | `(TypeAdapter.new Int).validate_python (json% "42")` |
 | `e.errors(include_url=False)`, `e.json()` | `e.errors (include_url := false)`, `e.json` |
+| `print(item)`, `repr(item)`, `print([item])` | `IO.println item`, `pyRepr item`, `IO.println (pyRepr [item])` |
+| `print(e)` (`str(e)` of a `ValidationError`) | `IO.println e` (`toString e`, `e.str`) |
 
 The constraint language is lean-keel's (`Keel.Refine`): `gt ge lt le
 multipleOf minLength maxLength`, joined with `∧`. A literal at a refined type

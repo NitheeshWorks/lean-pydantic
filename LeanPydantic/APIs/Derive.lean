@@ -213,6 +213,19 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
       parts := parts.push (← projAt p i)
       i := i + 1
   let ctor := mkIdent (`_root_ ++ ctorVal.name)
+  let src := mkIdent `src
+  let mode := mkIdent `mode
+  -- each field's `repr` sees the member it was read from: its key, or,
+  -- under `populate_by_name`, its name when the key is absent
+  let reprs ← modelFields.mapM fun (f, fty) => do
+    let key := Syntax.mkStrLit ((aliasOf? fty).getD f.toString)
+    let nm := Syntax.mkStrLit f.toString
+    let member ← if populate && (aliasOf? fty).isSome then
+        `(match LeanPydantic.Fields.setMember $src $key with
+          | some v => some v
+          | none => LeanPydantic.Fields.setMember $src $nm)
+      else `(LeanPydantic.Fields.setMember $src $key)
+    `(($nm, LeanPydantic.PyRepr.reprIn $member $mode ($(mkIdent (`_root_ ++ declName ++ f)) $x)))
   let n := declName
   let extraStx := mkIdent extra
   elabCommand (← `(command|
@@ -222,7 +235,8 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
       into := fun ($x : $tyId) => $tuple
       back := fun $p => $ctor $parts*
       back_into := fun _ => rfl
-      extra := $extraStx))
+      extra := $extraStx
+      reprArgs := fun $src $mode ($x : $tyId) => [$reprs,*]))
   -- the laws, when every field type has them (a `Float` field has none)
   let fieldsLawful ← liftTermElabM <| fieldTypes.allM fun fty => do
     let inst ← mkAppOptM ``LeanPydantic.LawfulJson #[some fty, none, none, none]

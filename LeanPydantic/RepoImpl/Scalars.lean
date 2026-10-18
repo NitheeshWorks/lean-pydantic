@@ -135,8 +135,10 @@ instance {α : Type} [JsonSchema α] : JsonSchema (Option α) := ⟨(JsonSchema.
 
 instance fromJsonRefined {α : Type} [FromJson α] [Constrained α] (c : Constraint α) :
     FromJson {x : α // c.holds x} where
-  title := if (FromJson.title α).startsWith "constrained-" then FromJson.title α
-    else "constrained-" ++ FromJson.title α
+  -- pydantic-core names a constrained `int`, `str`, `float` or `bytes`
+  -- validator `constrained-…`; the others keep their name
+  title := if FromJson.title α ∈ ["int", "str", "float", "bytes"] then "constrained-" ++ FromJson.title α
+    else FromJson.title α
   exact := FromJson.exact α
   fromJson cfg j :=
     match fromJson cfg j with

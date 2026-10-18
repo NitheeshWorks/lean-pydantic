@@ -122,7 +122,9 @@ Listed here with the reason, and in `docs/traceability.toml` with
   `float` is `Float`, with pydantic's IEEE semantics.
 * `multiple_of` on a `PyDecimal` is exact; Python divides at 28 digits and
   rejects any value whose quotient is wider (UP-055, pydantic#13970).
-* `PySet` dumps in input order (Python: hash order).
+* `PySet` dumps, and `repr`s, in input order (Python: hash order).
+* `repr` of a string escapes the C0 and C1 controls, DEL, NBSP and the soft
+  hyphen; Python escapes every character `str.isprintable` rejects.
 * `pattern` rejects `\p{..}` at compile time, and three things Keel's
   assertions cannot express yet: `^` and `$` under `(?m)` (line anchors), the
   word assertions under `(?-u)` (ASCII word characters), and

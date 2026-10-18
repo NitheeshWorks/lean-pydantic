@@ -33,7 +33,8 @@ def pyEscape (quote : Char) (c : Char) : String :=
   else if c = '\n' then "\\n"
   else if c = '\r' then "\\r"
   else if c = '\t' then "\\t"
-  else if c.toNat < 0x20 ∨ c.toNat = 0x7f then
+  -- C0, DEL, C1, NBSP and the soft hyphen: not printable to Python
+  else if c.toNat < 0x20 ∨ (0x7f ≤ c.toNat ∧ c.toNat ≤ 0xa0) ∨ c.toNat = 0xad then
     "\\x" ++ String.ofList (Nat.toDigits 16 (c.toNat / 16)) ++ String.ofList (Nat.toDigits 16 (c.toNat % 16))
   else String.singleton c
 
@@ -43,13 +44,57 @@ def pyStrRepr (s : String) : String :=
   let q := if s.contains '\'' ∧ ¬ s.contains '"' then '"' else '\''
   String.singleton q ++ String.join (s.toList.map (pyEscape q)) ++ String.singleton q
 
-/-- Python's `repr` of a JSON scalar (`True`, `None`, `'a'`, `1`). -/
-def pyRepr : Json → String
-  | .str s => pyStrRepr s
+/-- Python's `float.__repr__` of shortest digits `mant × 10^exp`. -/
+def pyFloatLayout (neg : Bool) (mant : Nat) (exp : Int) : String :=
+  let ds := toString mant
+  let n : Int := ds.length
+  let adj := exp + n - 1
+  let sign := if neg then "-" else ""
+  let body :=
+    if -4 ≤ adj ∧ adj < 16 then
+      if exp ≥ 0 then ds ++ String.ofList (List.replicate exp.toNat '0') ++ ".0"
+      else if n + exp > 0 then
+        let k := (n + exp).toNat
+        String.ofList (ds.toList.take k) ++ "." ++ String.ofList (ds.toList.drop k)
+      else "0." ++ String.ofList (List.replicate (-(n + exp)).toNat '0') ++ ds
+    else
+      let tail := String.ofList (ds.toList.drop 1)
+      let e := toString adj.natAbs
+      String.ofList (ds.toList.take 1) ++ (if tail.isEmpty then "" else "." ++ tail) ++ "e" ++
+        (if adj < 0 then "-" else "+") ++ (if e.length < 2 then "0" ++ e else e)
+  sign ++ body
+
+/-- Python's `repr` of a number: an integer's digits, or the `float` the
+literal reads as (`inf` once it overflows). -/
+def pyNumRepr : Number → String
+  | .int i => toString i
+  | .nan => "nan"
+  | .inf => "inf"
+  | .negInf => "-inf"
+  | .float d =>
+    match Number.ofFloat (Number.float d).toFloat with
+    | .float e => pyFloatLayout e.neg e.mant e.exp
+    | .inf => "inf"
+    | .negInf => "-inf"
+    | _ => "nan"
+
+/-- Python's `repr` of the value a JSON value stands for:
+`{'a': [1, 2.0, None, True]}`. -/
+def pyReprJson : Json → String
+  | .null => "None"
   | .bool true => "True"
   | .bool false => "False"
-  | .null => "None"
-  | j => toString j
+  | .num n => pyNumRepr n
+  | .str s => pyStrRepr s
+  | .arr ⟨xs⟩ => "[" ++ ", ".intercalate (xs.attach.map fun ⟨x, _⟩ => pyReprJson x) ++ "]"
+  | .obj ⟨kvs⟩ => "{" ++ ", ".intercalate (kvs.attach.map fun ⟨(k, v), _⟩ =>
+      pyStrRepr k ++ ": " ++ pyReprJson v) ++ "}"
+termination_by j => j
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ xs›; omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ kvs›; simp at this; omega)
 
 /-- `a`, `a or b`, `a, b or c`: how pydantic lists expected values. -/
 def orJoin : List String → String
@@ -73,10 +118,10 @@ def literalFind {α : Type} [ToJson α] (cs : List α) (j : Json) : Option α :=
 /-- `Literal[v₁, …]`: the input must equal one of the values' dumps. -/
 instance (priority := high) fromJsonLiteral {α : Type} [ToJson α] [DecidableEq α] (cs : List α) :
     FromJson {x : α // (Constraint.oneOf cs).holds x} where
-  title := "literal[" ++ ", ".intercalate (cs.map (pyRepr ∘ toJson DumpOpts.roundTrip)) ++ "]"
+  title := "literal[" ++ ",".intercalate (cs.map (pyReprJson ∘ toJson DumpOpts.roundTrip)) ++ "]"
   fromJson cfg j :=
     let err : Except (List ErrorDetails) {x : α // (Constraint.oneOf cs).holds x} :=
-      .error [{ kind := ErrorKind.literalError (orJoin (cs.map (pyRepr ∘ toJson DumpOpts.roundTrip))),
+      .error [{ kind := ErrorKind.literalError (orJoin (cs.map (pyReprJson ∘ toJson DumpOpts.roundTrip))),
                 input := j, mode := cfg.mode }]
     match h : literalFind cs j with
     | some c => .ok ⟨c, List.mem_of_find?_eq_some h⟩
@@ -257,7 +302,7 @@ def schema : Schema :=
 end Enumeration
 
 instance (priority := low) {α : Type} [e : Enumeration α] : FromJson α :=
-  ⟨e.title, Enumeration.validate, fun _ => true⟩
+  ⟨"str-enum[" ++ e.title ++ "]", Enumeration.validate, fun _ => true⟩
 instance (priority := low) {α : Type} [e : Enumeration α] : ToJson α := ⟨fun _ a => .str (e.value a)⟩
 instance (priority := low) {α : Type} [Enumeration α] : JsonSchema α := ⟨Enumeration.schema (α := α)⟩
 

@@ -311,7 +311,6 @@ def json (e : ValidationError) (include_url := true) (include_context := true)
     (include_input := true) : String :=
   LeanJson.printStr (.arr ⟨e.errors include_url include_context include_input⟩)
 
-instance : ToString ValidationError := ⟨fun e => e.json⟩
 
 end ValidationError
 

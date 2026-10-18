@@ -413,6 +413,31 @@ def run_dump(tag, text, opts):
 dumps = [(PD_DUMP if tag in ('shop', 'offer') else PD_DUMP_EXTRA, tag, text, opts, run_dump(tag, text, opts))
          for tag, text, opts in DUMP_ROWS]
 
+# repr(value) (and str(value) for a model) of what validation returns, or
+# str(ValidationError): what `print` shows in pydantic's docs
+REPR_REF = 'pydantic/tests/test_main.py::test_ultra_simple_repr'
+STR_ERR_REF = 'pydantic-core/tests/test_misc.py::test_validation_error_multiple'
+
+def run_repr(tag, mode, strict, text, out):
+    """(validated?, repr(v) or str(v), or str(e))"""
+    ta = TypeAdapter(TYPES[tag])
+    try:
+        v = ta.validate_json(text, strict=strict) if mode == 'json' else ta.validate_python(json.loads(text), strict=strict)
+        return True, (repr(v) if out == 'repr' else str(v))
+    except ValidationError as e:
+        return False, str(e)
+
+repr_rows = []
+seen = set()
+for ref, tag, mode, strict, text, _ in rows:
+    if mode == 'python-attrs' or (tag, mode, strict, text) in seen: continue
+    seen.add((tag, mode, strict, text))
+    is_model = isinstance(TYPES[tag], type) and issubclass(TYPES[tag], BaseModel)
+    ok, r = run_repr(tag, mode, strict, text, 'repr')
+    repr_rows.append((REPR_REF if ok else STR_ERR_REF, tag, mode, strict, 'repr', text, r))
+    if ok and is_model:
+        repr_rows.append((REPR_REF, tag, mode, strict, 'str', text, run_repr(tag, mode, strict, text, 'str')[1]))
+
 schemas = [(tag, json.dumps(TypeAdapter(t).json_schema(), separators=(',', ':'), ensure_ascii=False))
            for tag, t in TYPES.items()]
 
@@ -436,6 +461,18 @@ print('def dumpTable : List (String × String × String × (Bool × Bool × Bool
 print(',\n'.join('  (%s, %s, %s, (%s), %s)' % (lean_str(r), lean_str(t), lean_str(i), ', '.join('true' if b else 'false' for b in o), lean_str(out))
       for r, t, i, o, out in dumps))
 print(']')
+print()
+RT = 'List (String × String × String × Bool × String × String × String)'
+rchunks = [repr_rows[i:i + 400] for i in range(0, len(repr_rows), 400)]
+for k, ch in enumerate(rchunks):
+    print('def reprTable%d : %s := [' % (k, RT))
+    print(',\n'.join('  (%s, %s, %s, %s, %s, %s, %s)' % (lean_str(r), lean_str(t), lean_str(m), 'true' if st else 'false',
+          lean_str(o), lean_str(i), lean_str(x)) for r, t, m, st, o, i, x in ch))
+    print(']')
+    print()
+print('/-- (upstream test, type tag, mode, strict, "repr" or "str", input, `repr(v)` / `str(v)` of the result or `str(e)`) -/')
+print('def reprTable : %s :=' % RT)
+print('  ' + ' ++ '.join('reprTable%d' % k for k in range(len(rchunks))))
 print()
 print('/-- (type tag, `TypeAdapter(T).json_schema()`, compact) -/')
 print('def schemaTable : List (String × String) := [')
