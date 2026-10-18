@@ -19,6 +19,6 @@ theorem error_type_ctx_coherent (e : ErrorDetails) :
   simp only [ErrorDetails.msg, ErrorDetails.ctx, ErrorDetails.type]
   cases k <;> (try cases m) <;>
     simp [ErrorKind.message, ErrorKind.ctx, ErrorKind.type, template, render, ctxLookup,
-      displayValue, String.append_assoc]
+      displayValue, String.append_assoc, ErrorKind.containerMessage, containerTemplate]
 
 end LeanPydantic

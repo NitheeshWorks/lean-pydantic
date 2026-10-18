@@ -24,6 +24,8 @@ inductive Keyword where
   | maxLength (n : Nat)
   /-- `pattern`: its source, and the matcher that gives it meaning. -/
   | pattern (p : Keel.Pattern)
+  | minItems (n : Nat)
+  | maxItems (n : Nat)
 
 /-- A JSON Schema. -/
 inductive Schema where
@@ -34,9 +36,20 @@ inductive Schema where
   | integer (kws : List Keyword)
   | number (kws : List Keyword)
   | string (kws : List Keyword)
+  /-- `{"items": s, "type": "array"}`, with `minItems`/`maxItems`. -/
+  | array (items : Schema) (kws : List Keyword)
+  /-- `{"maxItems": n, "minItems": n, "prefixItems": [...], "type": "array"}`. -/
+  | tuple (items : List Schema)
+  /-- `{"additionalProperties": s, "type": "object"}`. -/
+  | dict (values : Schema)
+  /-- `{"const": v}` or `{"enum": [...]}`, with `type` when the values share one. -/
+  | literal (values : List Json)
   | anyOf (alts : List Schema)
   /-- A model: its title, its properties in field order, its required keys. -/
   | object (title : String) (props : List (String × Schema)) (required : List String)
+  /-- `{"$ref": "#/$defs/name"}`, carrying the schema it names; the printer
+  collects every named schema into the top-level `$defs`. -/
+  | ref (name : String) (target : Schema)
   /-- Annotations that do not affect validation: a field's `title` and
   `default`. -/
   | annotated (s : Schema) (title : Option String) (default : Option Json)
@@ -48,6 +61,7 @@ def Schema.withKeywords (s : Schema) (kws : List Keyword) : Schema :=
   | .integer k => .integer (k ++ kws)
   | .number k => .number (k ++ kws)
   | .string k => .string (k ++ kws)
+  | .array i k => .array i (k ++ kws)
   | s => s
 
 end LeanPydantic

@@ -32,9 +32,27 @@ without one is required. Supported: structures without parameters or parent
 structures, whose defaults do not refer to other fields.
 -/
 
+namespace LeanPydantic
+
+/-- `Alias "itemId" Int`: a field of type `Int` that pydantic validates and
+(with `by_alias`) dumps under the key `itemId`, as
+`item_id: int = Field(alias='itemId')`. It is `Int` itself (an `abbrev`), so
+the field is used as an `Int`; only `deriving Model` reads the alias. -/
+abbrev Alias (_alias : String) (α : Type) : Type := α
+
+end LeanPydantic
+
 namespace LeanPydantic.Derive
 
 open Lean Elab Command Meta
+
+/-- The alias of a field type `Alias "a" T`, if it is one. -/
+def aliasOf? (ty : Expr) : Option String :=
+  if ty.isAppOfArity ``LeanPydantic.Alias 2 then
+    match ty.appFn!.appArg! with
+    | .lit (.strVal s) => some s
+    | _ => none
+  else none
 
 /-- `Prod.fst (Prod.snd (… p))`, `i` `snd`s deep. -/
 def projAt {m : Type → Type} [Monad m] [MonadQuotation m] (p : Term) : Nat → m Term
@@ -58,11 +76,15 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
       throwError "deriving Model: `{declName}` extends another structure, which is not supported yet"
   let tyId := mkIdent declName
   let title := Syntax.mkStrLit (declName.componentsRev.head!.toString)
+  let fieldTypes ← liftTermElabM <| forallTelescope ctorVal.type fun xs _ => xs.mapM (fun x => inferType x)
   -- the field chain and its lawfulness proof, built from the last field back
   let mut fieldsStx ← `(LeanPydantic.Fields.nil)
   let mut lawStx ← `(LeanPydantic.Fields.nil_lawful)
-  for f in fields.reverse do
+  for (f, fty) in (fields.zip fieldTypes).reverse do
     let nameLit := Syntax.mkStrLit f.toString
+    let aliasStx ← match aliasOf? fty with
+      | some a => `(some $(Syntax.mkStrLit a))
+      | none => `(none)
     let dflt ← match getDefaultFnForField? env declName f with
       | some d =>
         let some dInfo := env.find? d | throwError "deriving Model: no default for `{f}`"
@@ -74,7 +96,7 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
           liftCoreM <| compileDecls #[d]
         `(some $(mkIdent d))
       | none => `(none)
-    fieldsStx ← `(LeanPydantic.Fields.field $nameLit $dflt $fieldsStx)
+    fieldsStx ← `(LeanPydantic.Fields.field $nameLit $aliasStx $dflt $fieldsStx)
     lawStx ← `(LeanPydantic.Fields.field_lawful (by decide) $lawStx)
   -- into: the tuple of fields; back: the constructor applied to its parts
   let x := mkIdent `x
@@ -91,19 +113,25 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
       fields := $fieldsStx
       into := fun ($x : $tyId) => $tuple
       back := fun $p => $ctor $parts*
-      back_into := fun _ => rfl
-      lawful := $lawStx))
-  elabCommand (← `(command|
-    /-- Validating a dump gives the model back (an instance of `LawfulJson`). -/
-    theorem $(mkIdent (n ++ `fromJson_toJson)) (cfg : LeanPydantic.Cfg) (a : $tyId) :
-        LeanPydantic.fromJson cfg (LeanPydantic.toJson {} a) = .ok a :=
-      LeanPydantic.LawfulJson.fromJson_toJson cfg a))
-  elabCommand (← `(command|
-    /-- Strict validation accepts only input the model's schema allows. -/
-    theorem $(mkIdent (n ++ `schema_sound)) (cfg : LeanPydantic.Cfg) (j : LeanJson.Json) (a : $tyId)
-        (hs : cfg.strict = true) (h : LeanPydantic.fromJson cfg j = .ok a) :
-        LeanPydantic.Conforms (LeanPydantic.JsonSchema.schema $tyId) j :=
-      LeanPydantic.LawfulJson.schema_sound cfg j a hs h))
+      back_into := fun _ => rfl))
+  -- the laws, when every field type has them (a `Float` field has none)
+  let lawful ← try
+      elabCommand (← `(command|
+        instance : LeanPydantic.LawfulModel $tyId := ⟨$lawStx⟩))
+      pure true
+    catch _ => pure false
+  if lawful then
+    elabCommand (← `(command|
+      /-- Validating a dump by alias gives the model back (an instance of `LawfulJson`). -/
+      theorem $(mkIdent (n ++ `fromJson_toJson)) (cfg : LeanPydantic.Cfg) (a : $tyId) :
+          LeanPydantic.fromJson cfg (LeanPydantic.toJson LeanPydantic.DumpOpts.roundTrip a) = .ok a :=
+        LeanPydantic.LawfulJson.fromJson_toJson cfg a))
+    elabCommand (← `(command|
+      /-- Strict validation accepts only input the model's schema allows. -/
+      theorem $(mkIdent (n ++ `schema_sound)) (cfg : LeanPydantic.Cfg) (j : LeanJson.Json) (a : $tyId)
+          (hs : cfg.strict = true) (h : LeanPydantic.fromJson cfg j = .ok a) :
+          LeanPydantic.Conforms (LeanPydantic.JsonSchema.schema $tyId) j :=
+        LeanPydantic.LawfulJson.schema_sound cfg j a hs h))
   let obj := mkIdent `obj
   let strict := mkIdent `strict
   let data := mkIdent `data
@@ -113,6 +141,9 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
   let exd := mkIdent `exclude_defaults
   let exn := mkIdent `exclude_none
   let indent := mkIdent `indent
+  let byAlias := mkIdent `by_alias
+  let exu := mkIdent `exclude_unset
+  let setFrom := mkIdent `set_from
   elabCommand (← `(command|
     /-- `Model.model_validate(obj, strict=None)`. -/
     def $(mkIdent (n ++ `model_validate)) ($obj : LeanJson.Json) ($strict : Bool := false) :=
@@ -128,15 +159,17 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
   elabCommand (← `(command|
     /-- `model.model_dump(include=, exclude=, exclude_defaults=, exclude_none=)`. -/
     def $(mkIdent (n ++ `model_dump)) ($self : $tyId) ($incl : Option (List String) := none)
-        ($excl : List String := []) ($exd : Bool := false) ($exn : Bool := false) :
+        ($excl : List String := []) ($byAlias : Bool := false) ($exu : Bool := false)
+        ($exd : Bool := false) ($exn : Bool := false) ($setFrom : Option LeanJson.Json := none) :
         LeanJson.Json :=
-      LeanPydantic.Model.model_dump $self $incl $excl $exd $exn))
+      LeanPydantic.Model.model_dump $self $incl $excl $byAlias $exu $exd $exn $setFrom))
   elabCommand (← `(command|
     /-- `model.model_dump_json(indent=None, ...)`. -/
     def $(mkIdent (n ++ `model_dump_json)) ($self : $tyId) ($indent : Option Nat := none)
         ($incl : Option (List String) := none) ($excl : List String := [])
-        ($exd : Bool := false) ($exn : Bool := false) : String :=
-      LeanPydantic.Model.model_dump_json $self $indent $incl $excl $exd $exn))
+        ($byAlias : Bool := false) ($exu : Bool := false)
+        ($exd : Bool := false) ($exn : Bool := false) ($setFrom : Option LeanJson.Json := none) : String :=
+      LeanPydantic.Model.model_dump_json $self $indent $incl $excl $byAlias $exu $exd $exn $setFrom))
 
 /-- The `deriving Model` handler. -/
 def mkModelHandler (declNames : Array Name) : CommandElabM Bool := do

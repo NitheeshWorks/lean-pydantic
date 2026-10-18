@@ -42,8 +42,8 @@ instance [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] [NonNull α] 
   fromJson_toJson cfg
     | none => rfl
     | some a => by
-      show fromJson cfg (toJson {} a) = _
-      rw [fromJson_option_of_ne_null cfg (NonNull.toJson_ne_null {} a), LawfulJson.fromJson_toJson]
+      show fromJson cfg (toJson DumpOpts.roundTrip a) = _
+      rw [fromJson_option_of_ne_null cfg (NonNull.toJson_ne_null _ a), LawfulJson.fromJson_toJson]
       rfl
   schema_sound cfg j a hs h := by
     rw [nullable_anyOf]
@@ -101,6 +101,10 @@ plus `c`'s keywords. -/
 theorem check_withKeywords (s : Schema) (kws : List Keyword) (j : Json) (h : s.check j = true)
     (hk : ∀ k ∈ kws, k.check j = true) : (s.withKeywords kws).check j = true := by
   cases s <;> simp_all [Schema.withKeywords, Schema.check, List.all_eq_true]
+  case array =>
+    cases j with
+    | arr xs => cases xs; simp_all [Schema.check, List.all_eq_true]
+    | _ => simp [Schema.check] at h
 
 instance [ToJson α] [JsonSchema α] [LawfulJson α] [LawfulConstrained α] [hc : Canonical c] :
     LawfulJson {x : α // c.holds x} where

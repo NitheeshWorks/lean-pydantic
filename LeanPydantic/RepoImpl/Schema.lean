@@ -33,6 +33,8 @@ def toPair : Keyword → String × Json
   | .minLength n => ("minLength", .num (.int n))
   | .maxLength n => ("maxLength", .num (.int n))
   | .pattern p => ("pattern", .str p.source)
+  | .minItems n => ("minItems", .num (.int n))
+  | .maxItems n => ("maxItems", .num (.int n))
 
 /-- A numeric keyword on a non-finite number, as a JSON Schema validator
 comparing IEEE doubles decides it: `inf` exceeds every bound, `-inf` is
@@ -55,11 +57,13 @@ def check : Keyword → Json → Bool
       | .multipleOf b => decide (Num.IsMultiple b n)
       | _ => true
     else match k with
-      | .minLength _ | .maxLength _ | .pattern _ => true
+      | .minLength _ | .maxLength _ | .pattern _ | .minItems _ | .maxItems _ => true
       | k => nonFinite k n
   | .minLength k, .str s => decide (k ≤ s.length)
   | .maxLength k, .str s => decide (s.length ≤ k)
   | .pattern p, .str s => p.test s
+  | .minItems k, .arr ⟨xs⟩ => decide (k ≤ xs.length)
+  | .maxItems k, .arr ⟨xs⟩ => decide (xs.length ≤ k)
   | _, _ => true
 
 end Keyword
@@ -80,7 +84,7 @@ where
 
 /-- Members with each key once, keeping its last value. -/
 def lastWins (kvs : List (String × Json)) : List (String × Json) :=
-  LeanJson.Json.dedupKeys kvs
+  LeanJson.Json.dedupKeysList kvs
 
 namespace JsonKind
 def isBool : Json → Bool | .bool _ => true | _ => false
@@ -88,6 +92,18 @@ def isNum : Json → Bool | .num _ => true | _ => false
 def isStr : Json → Bool | .str _ => true | _ => false
 def isIntegral : Json → Bool | .num n => Num.isIntegral n | _ => false
 end JsonKind
+
+/-- The JSON type all of a literal's values share, if they share one. -/
+def literalType (vs : List Json) : Option String :=
+  let ty : Json → Option String
+    | .str _ => some "string"
+    | .bool _ => some "boolean"
+    | .num (.int _) => some "integer"
+    | .null => some "null"
+    | _ => none
+  match vs.map ty with
+  | some t :: ts => if ts.all (· = some t) then some t else none
+  | _ => none
 
 namespace Schema
 
@@ -100,17 +116,31 @@ def members : Schema → List (String × Json)
   | .integer kws => kws.map Keyword.toPair ++ [("type", .str "integer")]
   | .number kws => kws.map Keyword.toPair ++ [("type", .str "number")]
   | .string kws => kws.map Keyword.toPair ++ [("type", .str "string")]
-  | .anyOf alts => [("anyOf", .arr (toJsonList alts))]
+  | .array items kws => [("items", toJson items)] ++ kws.map Keyword.toPair ++ [("type", .str "array")]
+  | .tuple ps =>
+    [("maxItems", .num (.int ps.length)), ("minItems", .num (.int ps.length)),
+      ("prefixItems", .arr ⟨toJsonList ps⟩), ("type", .str "array")]
+  | .dict v => [("additionalProperties", toJson v), ("type", .str "object")]
+  | .literal vs =>
+    (match vs with
+      | [v] => [("const", v)]
+      | _ => [("enum", .arr ⟨vs⟩)]) ++
+    (match literalType vs with
+      | some t => [("type", .str t)]
+      | none => [])
+  | .anyOf alts => [("anyOf", .arr ⟨toJsonList alts⟩)]
   | .object title props required =>
-    [("properties", .obj (toJsonProps props))] ++
-    (if required = [] then [] else [("required", .arr (required.map .str))]) ++
+    [("properties", .obj ⟨toJsonProps props⟩)] ++
+    (if required = [] then [] else [("required", .arr ⟨required.map .str⟩)]) ++
     [("title", .str title), ("type", .str "object")]
+  | .ref name _ => [("$ref", .str ("#/$defs/" ++ name))]
   | .annotated s title default =>
     members s ++ (match default with | some d => [("default", d)] | none => []) ++
       (match title with | some t => [("title", .str t)] | none => [])
 
-/-- The schema as pydantic prints it. -/
-def toJson (s : Schema) : Json := .obj (sortKeys (lastWins (members s)))
+/-- The schema as pydantic prints it, inside a document (references stay
+references). -/
+def toJson (s : Schema) : Json := .obj ⟨sortKeys (lastWins (members s))⟩
 
 def toJsonList : List Schema → List Json
   | [] => []
@@ -122,6 +152,56 @@ def toJsonProps : List (String × Schema) → List (String × Json)
 end
 
 mutual
+/-- Every named schema referenced from `s`, outermost first. -/
+def defs : Schema → List (String × Schema)
+  | .array items _ => defs items
+  | .tuple ps => defsList ps
+  | .dict v => defs v
+  | .anyOf alts => defsList alts
+  | .object _ props _ => defsProps props
+  | .ref name target => (name, target) :: defs target
+  | .annotated s _ _ => defs s
+  | _ => []
+
+def defsList : List Schema → List (String × Schema)
+  | [] => []
+  | s :: ss => defs s ++ defsList ss
+
+def defsProps : List (String × Schema) → List (String × Schema)
+  | [] => []
+  | (_, s) :: ps => defs s ++ defsProps ps
+end
+
+/-- The named schema itself, for a reference; anything else as it is. -/
+def unref : Schema → Schema
+  | .ref _ target => target
+  | s => s
+
+/-- Each name once, first occurrence kept. -/
+def dedupDefs (ds : List (String × Schema)) : List (String × Schema) :=
+  ds.foldl (fun acc d => if acc.any (·.1 == d.1) then acc else acc ++ [d]) []
+
+/-- A whole JSON Schema document, as `model_json_schema()` and
+`TypeAdapter.json_schema()` print it: a top-level reference is replaced by
+what it names, and every named schema goes under `$defs`, sorted by name. -/
+def document (s : Schema) : Json :=
+  let top := s.unref
+  let ds := dedupDefs (match s with
+    | .ref _ target => defs target
+    | _ => defs s)
+  let ms := members top ++
+    (if ds = [] then [] else [("$defs", .obj ⟨sortKeys (ds.map fun (n, d) => (n, toJson d))⟩)])
+  .obj ⟨sortKeys (lastWins ms)⟩
+
+/-- Whether pydantic gives a field of this schema a `title`: not for a
+reference to a model or an enumeration, nor for a nullable one
+(`field_title_should_be_set`). -/
+def wantsTitle : Schema → Bool
+  | .ref _ _ => false
+  | .anyOf [s, .null] => wantsTitle s
+  | _ => true
+
+mutual
 /-- Whether `j` is valid under the schema. -/
 def check : Schema → Json → Bool
   | .any, _ => true
@@ -130,12 +210,39 @@ def check : Schema → Json → Bool
   | .integer kws, j => JsonKind.isIntegral j && kws.all (·.check j)
   | .number kws, j => JsonKind.isNum j && kws.all (·.check j)
   | .string kws, j => JsonKind.isStr j && kws.all (·.check j)
+  | .array items kws, j =>
+    (match j with
+      | .arr ⟨xs⟩ => checkAll items xs
+      | _ => false) && kws.all (·.check j)
+  | .tuple ps, j =>
+    match j with
+    | .arr ⟨xs⟩ => checkTuple ps xs
+    | _ => false
+  | .dict v, j =>
+    match j with
+    | .obj ⟨kvs⟩ => checkValues v (LeanJson.Json.dedupKeysList kvs)
+    | _ => false
+  | .literal vs, j => decide (j ∈ vs)
   | .anyOf alts, j => checkAny alts j
   | .object _ props required, j =>
     match j with
-    | .obj kvs => checkProps props kvs && required.all (fun r => (LeanJson.Json.lookupLast r kvs).isSome)
+    | .obj ⟨kvs⟩ => checkProps props kvs && required.all (fun r => (LeanJson.Json.lookupLast r kvs).isSome)
     | _ => false
+  | .ref _ target, j => check target j
   | .annotated s _ _, j => check s j
+
+def checkAll (s : Schema) : List Json → Bool
+  | [] => true
+  | x :: xs => check s x && checkAll s xs
+
+def checkTuple : List Schema → List Json → Bool
+  | [], [] => true
+  | s :: ss, x :: xs => check s x && checkTuple ss xs
+  | _, _ => false
+
+def checkValues (s : Schema) : List (String × Json) → Bool
+  | [] => true
+  | (_, v) :: kvs => check s v && checkValues s kvs
 
 def checkAny : List Schema → Json → Bool
   | [], _ => false

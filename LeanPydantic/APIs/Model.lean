@@ -38,7 +38,12 @@ class Model (α : Type) where
   into : α → Product
   back : Product → α
   back_into : ∀ a, back (into a) = a
-  lawful : fields.Lawful
+
+/-- A model whose fields are lawful (every field type is). `deriving Model`
+proves it when it can; a model with, say, a `Float` field has no such
+instance, and keeps its validator and serialiser without the laws. -/
+class LawfulModel (α : Type) [m : Model α] : Prop where
+  lawful : m.fields.Lawful
 
 namespace Model
 
@@ -52,44 +57,44 @@ theorem fromJson_eq [m : Model α] (cfg : Cfg) (j : Json) :
     fromJson (α := α) cfg j = Fields.validate m.title m.fields m.back cfg j := rfl
 
 /-- **Every model is lawful**, from its fields' laws. -/
-instance (priority := low) lawfulJson [m : Model α] : LawfulJson α where
+instance (priority := low) lawfulJson [m : Model α] [hl : LawfulModel α] : LawfulJson α where
   fromJson_toJson cfg a := by
     rw [fromJson_eq]
-    show (m.fields.decode cfg _ (m.fields.encode {} (m.into a))).map m.back = _
-    rw [m.lawful.decode_encode cfg _ _ _ (fun _ _ => rfl)]
+    show (m.fields.decode cfg _ (m.fields.encode DumpOpts.roundTrip (m.into a))).map m.back = _
+    rw [hl.lawful.decode_encode cfg _ _ _ (fun _ _ => rfl)]
     simp [Except.map, m.back_into]
   schema_sound cfg j a hs h := by
     rw [fromJson_eq] at h
     unfold Fields.validate at h
     split at h
     · rename_i kvs
-      cases hd : m.fields.decode cfg (.obj kvs) kvs with
+      cases hd : m.fields.decode cfg (.obj ⟨kvs⟩) kvs with
       | error e => rw [hd] at h; cases h
       | ok b =>
-        obtain ⟨hp, hr⟩ := m.lawful.sound cfg _ kvs b hs hd
-        show (Schema.checkProps _ kvs && _) = true
-        rw [hp, Bool.true_and, List.all_eq_true]
+        obtain ⟨hp, hr⟩ := hl.lawful.sound cfg _ kvs b hs hd
+        show Schema.check (.ref _ (.object _ _ _)) _ = true
+        simp only [Schema.check, hp, Bool.true_and, List.all_eq_true]
         exact hr
     · cases h
   errors_ne_nil cfg j := by
     rw [fromJson_eq]; unfold Fields.validate
     split
     · rename_i kvs
-      have := m.lawful.ne_nil cfg (.obj kvs) kvs
-      cases hd : m.fields.decode cfg (.obj kvs) kvs <;> simp_all [Except.map]
+      have := hl.lawful.ne_nil cfg (.obj ⟨kvs⟩) kvs
+      cases hd : m.fields.decode cfg (.obj ⟨kvs⟩) kvs <;> simp_all [Except.map]
     · nofun
 
 instance (priority := low) [Model α] : NonNull α := ⟨fun _ _ => nofun⟩
 
 /-- **Errors are located under field names**: every error of a model whose
 input is an object is placed under one of its fields. -/
-theorem validate_loc_prefix [m : Model α] (cfg : Cfg) (kvs : List (String × Json))
-    (es : List ErrorDetails) (h : fromJson (α := α) cfg (.obj kvs) = .error es) :
+theorem validate_loc_prefix [m : Model α] [hl : LawfulModel α] (cfg : Cfg) (kvs : List (String × Json))
+    (es : List ErrorDetails) (h : fromJson (α := α) cfg (.obj ⟨kvs⟩) = .error es) :
     ∀ e ∈ es, ∃ k ∈ m.fields.keys, ∃ l, e.loc = .key k :: l := by
   rw [fromJson_eq] at h
   simp only [Fields.validate] at h
-  cases hd : m.fields.decode cfg (.obj kvs) kvs with
-  | error e => rw [hd] at h; cases h; exact m.lawful.loc_key cfg _ kvs _ hd
+  cases hd : m.fields.decode cfg (.obj ⟨kvs⟩) kvs with
+  | error e => rw [hd] at h; cases h; exact hl.lawful.loc_key cfg _ kvs _ hd
   | ok b => rw [hd] at h; cases h
 
 end Model
@@ -97,19 +102,30 @@ end Model
 /-! ## Validation results -/
 
 /-- What a successful validation guarantees: the value is the validator's
-result for that input, and in strict mode the input conforms to the
-schema. -/
-structure Validated {α : Type} [FromJson α] [JsonSchema α] (cfg : Cfg) (obj : Json) (a : α) : Prop where
+result for that input. (With the type's laws, the input then also conforms
+to its schema in strict mode: `Validated.conforms`.) -/
+structure Validated {α : Type} [FromJson α] (cfg : Cfg) (obj : Json) (a : α) : Prop where
   ref : fromJson cfg obj = .ok a
-  conforms : cfg.strict = true → Conforms (JsonSchema.schema α) obj
 
-/-- Validate under a configuration: the value with its guarantees, or a
+theorem Validated.conforms {α : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α]
+    {cfg : Cfg} {obj : Json} {a : α} (h : Validated cfg obj a) (hs : cfg.strict = true) :
+    Conforms (JsonSchema.schema α) obj :=
+  LawfulJson.schema_sound cfg obj a hs h.ref
+
+/-- The error reported if a validator ever failed without saying why (no
+lawful validator does: `LawfulJson.errors_ne_nil`). -/
+def unexplained (obj : Json) (mode : InputMode) : ErrorDetails :=
+  { kind := .valueError "validation failed", input := obj, mode }
+
+/-- Validate under a configuration: the value with its guarantee, or a
 `ValidationError` (never empty). -/
-def validateWith (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (cfg : Cfg)
-    (obj : Json) : Except ValidationError {a : α // Validated cfg obj a} :=
+def validateWith (α : Type) [FromJson α] (cfg : Cfg) (obj : Json) :
+    Except ValidationError {a : α // Validated cfg obj a} :=
   match h : fromJson (α := α) cfg obj with
-  | .ok a => .ok ⟨a, ⟨h, fun hs => LawfulJson.schema_sound cfg obj a hs h⟩⟩
-  | .error es => .error ⟨FromJson.title α, es, fun e => LawfulJson.errors_ne_nil (α := α) cfg obj (e ▸ h)⟩
+  | .ok a => .ok ⟨a, ⟨h⟩⟩
+  | .error es =>
+    if hn : es = [] then .error ⟨FromJson.title α, [unexplained obj cfg.mode], by simp⟩
+    else .error ⟨FromJson.title α, es, hn⟩
 
 /-- The `json_invalid` error pydantic reports for text that is not JSON. -/
 def jsonInvalid (data : String) (e : LeanJson.JsonError) : ErrorDetails :=
@@ -117,10 +133,10 @@ def jsonInvalid (data : String) (e : LeanJson.JsonError) : ErrorDetails :=
 
 /-- Parse JSON text and validate it in JSON mode: the value, a JSON value
 the text parses to, and the guarantees for it. -/
-def validateJsonWith (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (strict : Bool)
+def validateJsonWith (α : Type) [FromJson α] (strict : Bool)
     (data : String) :
     Except ValidationError
-      {a : α // ∃ j, LeanJson.parseDocument data.toUTF8 = .ok j ∧ Validated { strict, mode := .json } j a} :=
+      {a : α // ∃ j, LeanJson.parseDocumentWith {} data.toUTF8 = .ok j ∧ Validated { strict, mode := .json } j a} :=
   match LeanJson.from_json data with
   | .error e => .error ⟨FromJson.title α, [jsonInvalid data e], by simp⟩
   | .ok ⟨j, hj⟩ =>
@@ -130,8 +146,10 @@ def validateJsonWith (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [Lawf
 
 /-- The dump of `a` under pydantic's `model_dump` options. -/
 def dumpWith {α : Type} [ToJson α] (a : α) («include» : Option (List String) := none)
-    (exclude : List String := []) (exclude_defaults : Bool := false) (exclude_none : Bool := false) : Json :=
-  toJson { «include», exclude, exclude_defaults, exclude_none } a
+    (exclude : List String := []) (by_alias : Bool := false) (exclude_unset : Bool := false)
+    (exclude_defaults : Bool := false) (exclude_none : Bool := false) (set_from : Option Json := none) :
+    Json :=
+  toJson { «include», exclude, by_alias, exclude_unset, exclude_defaults, exclude_none, set_from } a
 
 namespace Model
 
@@ -147,37 +165,45 @@ def model_validate_json (data : String) (strict : Bool := false) :=
   validateJsonWith α strict data
 
 /-- `Model.model_json_schema()`. -/
-def model_json_schema : Json := (JsonSchema.schema α).toJson
+def model_json_schema : Json := (JsonSchema.schema α).document
 
 variable {α}
 
-/-- `model.model_dump(...)`. -/
+/-- `model.model_dump(include=, exclude=, by_alias=, exclude_unset=,
+exclude_defaults=, exclude_none=)`. `set_from` is the input the model was
+validated from, which `exclude_unset` consults. -/
 def model_dump (a : α) («include» : Option (List String) := none) (exclude : List String := [])
-    (exclude_defaults : Bool := false) (exclude_none : Bool := false) : Json :=
-  dumpWith a «include» exclude exclude_defaults exclude_none
+    (by_alias : Bool := false) (exclude_unset : Bool := false) (exclude_defaults : Bool := false)
+    (exclude_none : Bool := false) (set_from : Option Json := none) : Json :=
+  dumpWith a «include» exclude by_alias exclude_unset exclude_defaults exclude_none set_from
 
 /-- `model.model_dump_json(indent=None, ...)`. -/
 def model_dump_json (a : α) (indent : Option Nat := none) («include» : Option (List String) := none)
-    (exclude : List String := []) (exclude_defaults : Bool := false) (exclude_none : Bool := false) :
+    (exclude : List String := []) (by_alias : Bool := false) (exclude_unset : Bool := false)
+    (exclude_defaults : Bool := false) (exclude_none : Bool := false) (set_from : Option Json := none) :
     String :=
-  LeanJson.printStr (dumpWith a «include» exclude exclude_defaults exclude_none) { indent }
+  LeanJson.printStr
+    (dumpWith a «include» exclude by_alias exclude_unset exclude_defaults exclude_none set_from) { indent }
 
 /-! ## What is proved about them -/
 
-/-- **Round trip**: validating a model's dump gives the model back, strict or
-lax. -/
+variable [LawfulModel α]
+
+/-- **Round trip** (`alias_roundtrip`): validating a model's dump by alias
+gives the model back, strict or lax. -/
 theorem model_validate_model_dump (a : α) (strict : Bool := false) :
-    (model_validate α (model_dump a) strict).map (·.val) = .ok a := by
+    (model_validate α (model_dump a (by_alias := true)) strict).map (·.val) = .ok a := by
+  have h := LawfulJson.fromJson_toJson { strict } a
   unfold model_validate validateWith
   split
-  · rename_i b h
-    have := LawfulJson.fromJson_toJson { strict } a
-    simp only [model_dump, dumpWith] at h
-    rw [this] at h; cases h; rfl
-  · rename_i es h
-    have := LawfulJson.fromJson_toJson { strict } a
-    simp only [model_dump, dumpWith] at h
-    rw [this] at h; cases h
+  · rename_i b hb
+    simp only [model_dump, dumpWith] at hb
+    rw [show ({ by_alias := true } : DumpOpts) = DumpOpts.roundTrip from rfl, h] at hb
+    cases hb; rfl
+  · rename_i es hb
+    simp only [model_dump, dumpWith] at hb
+    rw [show ({ by_alias := true } : DumpOpts) = DumpOpts.roundTrip from rfl, h] at hb
+    cases hb
 
 /-- **Schema soundness**: what strict validation accepts conforms to
 `model_json_schema`'s schema. -/
@@ -186,10 +212,10 @@ theorem schema_sound {obj : Json} {a : α} (h : (model_validate α obj (strict :
   unfold model_validate validateWith at h
   split at h
   · rename_i b hb; exact LawfulJson.schema_sound _ obj b rfl hb
-  · cases h
+  · split at h <;> cases h
 
-/-- **Dumps conform**: a model's dump conforms to its schema. -/
-theorem model_dump_conforms (a : α) : Conforms (JsonSchema.schema α) (model_dump a) :=
+/-- **Dumps conform**: a model's dump by alias conforms to its schema. -/
+theorem model_dump_conforms (a : α) : Conforms (JsonSchema.schema α) (model_dump a (by_alias := true)) :=
   LawfulJson.schema_sound { strict := true } _ a rfl (LawfulJson.fromJson_toJson _ a)
 
 end Model
@@ -206,7 +232,7 @@ def TypeAdapter.new (α : Type) : TypeAdapter α := ⟨⟩
 
 namespace TypeAdapter
 
-variable {α : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α]
+variable {α : Type} [FromJson α] [ToJson α] [JsonSchema α]
 
 /-- `TypeAdapter.validate_python(obj, strict=None)`. -/
 def validate_python (_ : TypeAdapter α) (obj : Json) (strict : Bool := false) :
@@ -216,17 +242,18 @@ def validate_python (_ : TypeAdapter α) (obj : Json) (strict : Bool := false) :
 /-- `TypeAdapter.validate_json(data, strict=None)`. -/
 def validate_json (_ : TypeAdapter α) (data : String) (strict : Bool := false) := validateJsonWith α strict data
 
-/-- `TypeAdapter.dump_python(value)`. -/
-def dump_python (_ : TypeAdapter α) (a : α) («include» : Option (List String) := none) (exclude : List String := [])
+/-- `TypeAdapter.dump_python(value, ...)`. -/
+def dump_python (_ : TypeAdapter α) (a : α) («include» : Option (List String) := none)
+    (exclude : List String := []) (by_alias : Bool := false) (exclude_unset : Bool := false)
     (exclude_defaults : Bool := false) (exclude_none : Bool := false) : Json :=
-  dumpWith a «include» exclude exclude_defaults exclude_none
+  dumpWith a «include» exclude by_alias exclude_unset exclude_defaults exclude_none
 
-/-- `TypeAdapter.dump_json(value, indent=None)`. -/
-def dump_json (_ : TypeAdapter α) (a : α) (indent : Option Nat := none) : String :=
-  LeanJson.printStr (toJson {} a) { indent }
+/-- `TypeAdapter.dump_json(value, indent=None, by_alias=False)`. -/
+def dump_json (_ : TypeAdapter α) (a : α) (indent : Option Nat := none) (by_alias : Bool := false) : String :=
+  LeanJson.printStr (toJson { by_alias } a) { indent }
 
 /-- `TypeAdapter.json_schema()`. -/
-def json_schema (_ : TypeAdapter α) : Json := (JsonSchema.schema α).toJson
+def json_schema (_ : TypeAdapter α) : Json := (JsonSchema.schema α).document
 
 end TypeAdapter
 

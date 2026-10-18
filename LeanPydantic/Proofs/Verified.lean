@@ -60,18 +60,20 @@ structure VerifiedWrappers : Prop where
 structure VerifiedModel : Prop where
   /-- The field combinator preserves the laws. -/
   fieldLawful : ∀ (α β : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (name : String)
-    (d : Option α) (rest : Fields β), name ∉ rest.keys → rest.Lawful → (Fields.field name d rest).Lawful
-  /-- Validating a dump gives the model back. -/
-  validateDump : ∀ (α : Type) [Model α] (a : α) (strict : Bool),
-    (Model.model_validate α (Model.model_dump a) strict).map (·.val) = .ok a
+    (alias : Option String) (d : Option α) (rest : Fields β), alias.getD name ∉ rest.keys →
+      rest.Lawful → (Fields.field name alias d rest).Lawful
+  /-- Validating a dump by alias gives the model back (`alias_roundtrip`). -/
+  validateDump : ∀ (α : Type) [Model α] [LawfulModel α] (a : α) (strict : Bool),
+    (Model.model_validate α (Model.model_dump a (by_alias := true)) strict).map (·.val) = .ok a
   /-- Strict validation accepts only what the schema allows. -/
-  schemaSound : ∀ (α : Type) [Model α] (obj : Json) (a : α),
+  schemaSound : ∀ (α : Type) [Model α] [LawfulModel α] (obj : Json) (a : α),
     (Model.model_validate α obj (strict := true)).map (·.val) = .ok a → Conforms (JsonSchema.schema α) obj
   /-- Dumps conform to the schema. -/
-  dumpConforms : ∀ (α : Type) [Model α] (a : α), Conforms (JsonSchema.schema α) (Model.model_dump a)
+  dumpConforms : ∀ (α : Type) [Model α] [LawfulModel α] (a : α),
+    Conforms (JsonSchema.schema α) (Model.model_dump a (by_alias := true))
   /-- Every error of an object's validation is located under a field. -/
-  locPrefix : ∀ (α : Type) [m : Model α] (cfg : Cfg) (kvs : List (String × Json)) es,
-    fromJson (α := α) cfg (.obj kvs) = .error es → ∀ e ∈ es, ∃ k ∈ m.fields.keys, ∃ l, e.loc = .key k :: l
+  locPrefix : ∀ (α : Type) [m : Model α] [LawfulModel α] (cfg : Cfg) (kvs : List (String × Json)) es,
+    fromJson (α := α) cfg (.obj ⟨kvs⟩) = .error es → ∀ e ∈ es, ∃ k ∈ m.fields.keys, ∃ l, e.loc = .key k :: l
 
 theorem theVerifiedConstraint : VerifiedConstraint where
   validateIff _ c x := Keel.Constraint.validatePy_iff c x
@@ -92,10 +94,10 @@ theorem theVerifiedWrappers : VerifiedWrappers where
   refinedIff _ _ _ c cfg j y := fromJson_refined_iff c cfg j y
 
 theorem theVerifiedModel : VerifiedModel where
-  fieldLawful _ _ _ _ _ _ _ _ _ h hr := Fields.field_lawful h hr
-  validateDump _ _ a strict := Model.model_validate_model_dump a strict
-  schemaSound _ _ _ _ h := Model.schema_sound h
-  dumpConforms _ _ a := Model.model_dump_conforms a
-  locPrefix _ _ cfg kvs es h := Model.validate_loc_prefix cfg kvs es h
+  fieldLawful _ _ _ _ _ _ _ _ _ _ h hr := Fields.field_lawful h hr
+  validateDump _ _ _ a strict := Model.model_validate_model_dump a strict
+  schemaSound _ _ _ _ _ h := Model.schema_sound h
+  dumpConforms _ _ _ a := Model.model_dump_conforms a
+  locPrefix _ _ _ cfg kvs es h := Model.validate_loc_prefix cfg kvs es h
 
 end LeanPydantic

@@ -31,8 +31,9 @@ instance (s : Schema) (j : Json) : Decidable (Conforms s j) :=
 
 /-- The laws of a type's validator, serialiser and schema. -/
 class LawfulJson (α : Type) [FromJson α] [ToJson α] [JsonSchema α] : Prop where
-  /-- Validating a dump gives the value back. -/
-  fromJson_toJson : ∀ (cfg : Cfg) (a : α), fromJson cfg (toJson {} a) = .ok a
+  /-- Validating a dump (every field, under its alias) gives the value
+  back. -/
+  fromJson_toJson : ∀ (cfg : Cfg) (a : α), fromJson cfg (toJson DumpOpts.roundTrip a) = .ok a
   /-- Strict validation accepts only what the schema allows. -/
   schema_sound : ∀ (cfg : Cfg) (j : Json) (a : α),
     cfg.strict = true → fromJson cfg j = .ok a → Conforms (JsonSchema.schema α) j
@@ -54,10 +55,10 @@ class LawfulConstrained (α : Type) [FromJson α] [Constrained α] : Prop where
 structure Fields.Lawful {β : Type} (F : Fields β) : Prop where
   /-- Members that agree with a dump on every field name decode to it. -/
   decode_encode : ∀ (cfg : Cfg) (j : Json) (b : β) (kvs : List (String × Json)),
-    (∀ k ∈ F.keys, LeanJson.Json.lookupLast k kvs = LeanJson.Json.lookupLast k (F.encode {} b)) →
+    (∀ k ∈ F.keys, LeanJson.Json.lookupLast k kvs = LeanJson.Json.lookupLast k (F.encode DumpOpts.roundTrip b)) →
       F.decode cfg j kvs = .ok b
   /-- A default dump writes every field, in order. -/
-  encode_keys : ∀ b : β, (F.encode {} b).map Prod.fst = F.keys
+  encode_keys : ∀ b : β, (F.encode DumpOpts.roundTrip b).map Prod.fst = F.keys
   /-- Strictly decoded members satisfy the properties and the required list. -/
   sound : ∀ (cfg : Cfg) (j : Json) (kvs : List (String × Json)) (b : β),
     cfg.strict = true → F.decode cfg j kvs = .ok b →

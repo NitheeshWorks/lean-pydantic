@@ -43,6 +43,20 @@ def type : ErrorKind → String
   | .stringTooLong _ => "string_too_long"
   | .stringPatternMismatch _ => "string_pattern_mismatch"
   | .valueError _ => "value_error"
+  | .listType => "list_type"
+  | .setType => "set_type"
+  | .tupleType => "tuple_type"
+  | .dictType => "dict_type"
+  | .tooShort .. => "too_short"
+  | .tooLong .. => "too_long"
+  | .literalError _ => "literal_error"
+  | .enum _ => "enum"
+  | .decimalType => "decimal_type"
+  | .decimalParsing => "decimal_parsing"
+  | .decimalMaxDigits _ => "decimal_max_digits"
+  | .decimalMaxPlaces _ => "decimal_max_places"
+  | .decimalWholeDigits _ => "decimal_whole_digits"
+  | .extraForbidden => "extra_forbidden"
 
 /-- The pydantic error `ctx`, as JSON members (empty: no `ctx`). -/
 def ctx : ErrorKind → List (String × Json)
@@ -57,10 +71,24 @@ def ctx : ErrorKind → List (String × Json)
   | .stringTooLong n => [("max_length", .num (.int n))]
   | .stringPatternMismatch p => [("pattern", .str p)]
   | .valueError e => [("error", .str e)]
+  | .tooShort t n a => [("field_type", .str t), ("min_length", .num (.int n)), ("actual_length", .num (.int a))]
+  | .tooLong t n a => [("field_type", .str t), ("max_length", .num (.int n)), ("actual_length", .num (.int a))]
+  | .literalError e => [("expected", .str e)]
+  | .enum e => [("expected", .str e)]
+  | .decimalMaxDigits n => [("max_digits", .num (.int n))]
+  | .decimalMaxPlaces n => [("decimal_places", .num (.int n))]
+  | .decimalWholeDigits n => [("whole_digits", .num (.int n))]
   | _ => []
 
 /-- `""` for one, `"s"` otherwise (pydantic-core's `plural_s`). -/
 def plural (n : Number) : String := if n = .int 1 then "" else "s"
+
+/-- A container type's message: its own for Python input, `a valid array`
+for JSON (pydantic-core's `message_template_json`). -/
+def containerMessage (mode : InputMode) (python : String) : String :=
+  match mode with
+  | .python => python
+  | .json => "Input should be a valid array"
 
 /-- The message, written out. -/
 def message (mode : InputMode) : ErrorKind → String
@@ -90,6 +118,27 @@ def message (mode : InputMode) : ErrorKind → String
     "String should have at most " ++ Num.display (.int n) ++ " character" ++ plural (.int n)
   | .stringPatternMismatch p => "String should match pattern '" ++ p ++ "'"
   | .valueError e => "Value error, " ++ e
+  | .listType => containerMessage mode "Input should be a valid list"
+  | .setType => containerMessage mode "Input should be a valid set"
+  | .tupleType => containerMessage mode "Input should be a valid tuple"
+  | .dictType => match mode with
+    | .python => "Input should be a valid dictionary"
+    | .json => "Input should be an object"
+  | .tooShort t n a => t ++ " should have at least " ++ Num.display (.int n) ++ " item" ++
+      plural (.int n) ++ " after validation, not " ++ Num.display (.int a)
+  | .tooLong t n a => t ++ " should have at most " ++ Num.display (.int n) ++ " item" ++
+      plural (.int n) ++ " after validation, not " ++ Num.display (.int a)
+  | .literalError e => "Input should be " ++ e
+  | .enum e => "Input should be " ++ e
+  | .decimalType => "Decimal input should be an integer, float, string or Decimal object"
+  | .decimalParsing => "Input should be a valid decimal"
+  | .decimalMaxDigits n => "Decimal input should have no more than " ++ Num.display (.int n) ++
+      " digit" ++ plural (.int n) ++ " in total"
+  | .decimalMaxPlaces n => "Decimal input should have no more than " ++ Num.display (.int n) ++
+      " decimal place" ++ plural (.int n)
+  | .decimalWholeDigits n => "Decimal input should have no more than " ++ Num.display (.int n) ++
+      " digit" ++ plural (.int n) ++ " before the decimal point"
+  | .extraForbidden => "Extra inputs are not permitted"
 
 end ErrorKind
 
@@ -99,6 +148,13 @@ inductive Piece where
   | lit (s : String)
   | var (key : String)
   | plural (key : String)
+
+/-- A container type's template (`message_template_json` says `a valid
+array`). -/
+def containerTemplate (mode : InputMode) (python : String) : List Piece :=
+  match mode with
+  | .python => [.lit python]
+  | .json => [.lit "Input should be a valid array"]
 
 /-- pydantic-core's message template for an error `type`, by input mode
 (`message_template_python` / `message_template_json`). -/
@@ -130,6 +186,27 @@ def template (mode : InputMode) (type : String) : List Piece :=
     [.lit "String should have at most ", .var "max_length", .lit " character", .plural "max_length"]
   | "string_pattern_mismatch" => [.lit "String should match pattern '", .var "pattern", .lit "'"]
   | "value_error" => [.lit "Value error, ", .var "error"]
+  | "list_type" => containerTemplate mode "Input should be a valid list"
+  | "set_type" => containerTemplate mode "Input should be a valid set"
+  | "tuple_type" => containerTemplate mode "Input should be a valid tuple"
+  | "dict_type" => match mode with
+    | .python => [.lit "Input should be a valid dictionary"]
+    | .json => [.lit "Input should be an object"]
+  | "too_short" => [.var "field_type", .lit " should have at least ", .var "min_length", .lit " item",
+      .plural "min_length", .lit " after validation, not ", .var "actual_length"]
+  | "too_long" => [.var "field_type", .lit " should have at most ", .var "max_length", .lit " item",
+      .plural "max_length", .lit " after validation, not ", .var "actual_length"]
+  | "literal_error" => [.lit "Input should be ", .var "expected"]
+  | "enum" => [.lit "Input should be ", .var "expected"]
+  | "decimal_type" => [.lit "Decimal input should be an integer, float, string or Decimal object"]
+  | "decimal_parsing" => [.lit "Input should be a valid decimal"]
+  | "decimal_max_digits" => [.lit "Decimal input should have no more than ", .var "max_digits",
+      .lit " digit", .plural "max_digits", .lit " in total"]
+  | "decimal_max_places" => [.lit "Decimal input should have no more than ", .var "decimal_places",
+      .lit " decimal place", .plural "decimal_places"]
+  | "decimal_whole_digits" => [.lit "Decimal input should have no more than ", .var "whole_digits",
+      .lit " digit", .plural "whole_digits", .lit " before the decimal point"]
+  | "extra_forbidden" => [.lit "Extra inputs are not permitted"]
   | _ => []
 
 /-- A context value as pydantic-core formats it into a message. -/
@@ -171,16 +248,16 @@ def url (e : ErrorDetails) : String := "https://errors.pydantic.dev/2.14/v/" ++ 
 
 /-- A location as JSON: keys as strings, indices as integers. -/
 def locJson (l : Loc) : Json :=
-  .arr (l.map fun | .key k => .str k | .index i => .num (.int i))
+  .arr ⟨l.map fun | .key k => .str k | .index i => .num (.int i)⟩
 
 /-- One line error as pydantic's `errors()` gives it, members in pydantic's
 order: `type`, `loc`, `msg`, `input`, then `ctx` and `url` when present and
 asked for. -/
 def toJson (e : ErrorDetails) (include_url := true) (include_context := true)
     (include_input := true) : Json :=
-  .obj <| [("type", .str e.type), ("loc", locJson e.loc), ("msg", .str e.msg)] ++
+  .obj <| List.toArray <| [("type", .str e.type), ("loc", locJson e.loc), ("msg", .str e.msg)] ++
     (if include_input then [("input", e.input)] else []) ++
-    (if include_context ∧ e.ctx ≠ [] then [("ctx", .obj e.ctx)] else []) ++
+    (if include_context ∧ e.ctx ≠ [] then [("ctx", .obj ⟨e.ctx⟩)] else []) ++
     (if include_url then [("url", .str e.url)] else [])
 
 end ErrorDetails
@@ -198,7 +275,7 @@ def error_count (e : ValidationError) : Nat := e.line_errors.length
 /-- pydantic's `json()`: the errors, compact. -/
 def json (e : ValidationError) (include_url := true) (include_context := true)
     (include_input := true) : String :=
-  LeanJson.printStr (.arr (e.errors include_url include_context include_input))
+  LeanJson.printStr (.arr ⟨e.errors include_url include_context include_input⟩)
 
 instance : ToString ValidationError := ⟨fun e => e.json⟩
 

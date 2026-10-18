@@ -104,7 +104,7 @@ def properties : List Property := [
   prop "model_json_schema keys are sorted"
     (fun r => ((), r))
     (fun _ => match Item.model_json_schema with
-      | .obj kvs => (kvs.map (·.1)) == ["properties", "required", "title", "type"]
+      | .obj kvs => (kvs.toList.map (·.1)) == ["properties", "required", "title", "type"]
       | _ => false)
     (fun _ => toString Item.model_json_schema),
   -- the JSON-text round trip (LeanJson's printer and parser in between)

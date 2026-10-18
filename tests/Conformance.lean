@@ -54,7 +54,7 @@ def runAs (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] 
 /-- A type tag's validator and schema. -/
 def dispatch (tag : String) : Option ((String → Bool → String → String) × Json) :=
   let r (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] :=
-    some (runAs α, (JsonSchema.schema α).toJson)
+    some (runAs α, (JsonSchema.schema α).document)
   match tag with
   | "int" => r Int
   | "nat" => r Nat
@@ -126,7 +126,7 @@ def handCases : List Case := [
       | .ok _ => pure false
       | .error e =>
         check "[{\"type\":\"greater_than\",\"loc\":[\"price\"],\"msg\":\"Input should be greater than 0\"}]"
-          (LeanJson.printStr (.arr (e.errors (include_url := false) (include_context := false)
+          (LeanJson.printStr (.arr (List.toArray <| e.errors (include_url := false) (include_context := false)
             (include_input := false))))
         <&&> pure (e.error_count == 1 && e.title == "Offer") }
 ]

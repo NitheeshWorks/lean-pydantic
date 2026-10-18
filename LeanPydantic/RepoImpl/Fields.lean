@@ -65,28 +65,49 @@ def member {α : Type} [FromJson α] (cfg : Cfg) (j : Json) (name : String) (def
       | some d => .ok d
       | none => .error [{ kind := .missing, input := j, mode := cfg.mode }]
 
-/-- Whether `model_dump` keeps a field whose dumped value is `v`. -/
-def keep (opts : DumpOpts) (name : String) (v : Json) (isDefault : Bool) : Bool :=
+/-- Whether `model_dump` keeps the field `name` whose dumped value is `v`. -/
+def keep (opts : DumpOpts) (name : String) (v : Json) (isDefault isSet : Bool) : Bool :=
   !(opts.exclude_none && decide (v = .null)) && !(opts.exclude_defaults && isDefault) &&
+    !(opts.exclude_unset && !isSet) &&
     !(decide (name ∈ opts.exclude)) && (match opts.«include» with
       | some ks => decide (name ∈ ks)
       | none => true)
 
-/-- A field `name : α` with an optional default, before the fields `rest`. -/
+/-- The member named `key` of the input a value was validated from. -/
+def setMember (set_from : Option Json) (key : String) : Option Json :=
+  match set_from with
+  | some (.obj ⟨kvs⟩) => LeanJson.Json.lookupLast key kvs
+  | _ => none
+
+/-- Whether the field under `key` was set in that input (every field is, when
+the input is unknown). -/
+def wasSet (set_from : Option Json) (key : String) : Bool :=
+  match set_from with
+  | some (.obj ⟨kvs⟩) => (LeanJson.Json.lookupLast key kvs).isSome
+  | _ => true
+
+/-- A field `name : α`, validated under `alias` when it has one (pydantic's
+`Field(alias=…)`, `validate_by_name=False`), with an optional default, before
+the fields `rest`. -/
 @[noinline]
-def field {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] (name : String) (default : Option α)
-    (rest : Fields β) : Fields (α × β) where
-  decode cfg j := Keel.Validator.both (member cfg j name default) (rest.decode cfg j)
-  encode opts p :=
-    let v := toJson opts.nested p.1
-    let isDefault := match default with
-      | some d => decide (toJson {} p.1 = toJson {} d)
-      | none => false
-    if keep opts name v isDefault then (name, v) :: rest.encode opts p.2 else rest.encode opts p.2
-  keys := name :: rest.keys
-  props := (name, .annotated (JsonSchema.schema α) (some (fieldTitle name))
-    (default.map (toJson {}))) :: rest.props
-  required := if default.isSome then rest.required else name :: rest.required
+def field {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
+    (default : Option α) (rest : Fields β) : Fields (α × β) :=
+  let key := alias.getD name
+  { decode := fun cfg j => Keel.Validator.both (member cfg j key default) (rest.decode cfg j)
+    encode := fun opts p =>
+      let v := toJson (opts.nested (setMember opts.set_from key)) p.1
+      let isDefault := match default with
+        | some d => decide (toJson {} p.1 = toJson {} d)
+        | none => false
+      let rest' := rest.encode opts p.2
+      if keep opts name v isDefault (wasSet opts.set_from key) then
+        ((if opts.by_alias then key else name), v) :: rest'
+      else rest'
+    keys := key :: rest.keys
+    props := (key, .annotated (JsonSchema.schema α)
+      (if (JsonSchema.schema α).wantsTitle then some (fieldTitle key) else none)
+      (default.map (toJson {}))) :: rest.props
+    required := if default.isSome then rest.required else key :: rest.required }
 
 variable {α β : Type}
 
@@ -94,15 +115,17 @@ variable {α β : Type}
 def validate (title : String) (F : Fields β) (back : β → α) (cfg : Cfg) (j : Json) :
     Except (List ErrorDetails) α :=
   match j with
-  | .obj kvs => (F.decode cfg j kvs).map back
+  | .obj ⟨kvs⟩ => (F.decode cfg j kvs).map back
   | _ => .error [{ kind := .modelType title, input := j, mode := cfg.mode }]
 
 /-- The model serialiser. -/
 def dump (F : Fields β) (into : α → β) (opts : DumpOpts) (a : α) : Json :=
-  .obj (F.encode opts (into a))
+  .obj ⟨F.encode opts (into a)⟩
 
-/-- The model schema. -/
-def schema (title : String) (F : Fields β) : Schema := .object title F.props F.required
+/-- The model schema: a reference, named by the model's title, to its object
+schema (pydantic puts every model under `$defs`; a document for the model
+itself is the object, with the others under `$defs`). -/
+def schema (title : String) (F : Fields β) : Schema := .ref title (.object title F.props F.required)
 
 end Fields
 

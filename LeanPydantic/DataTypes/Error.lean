@@ -57,6 +57,29 @@ inductive ErrorKind where
   | stringTooShort (minLength : Nat)
   | stringTooLong (maxLength : Nat)
   | stringPatternMismatch (pattern : String)
+  /-- `list_type`, `set_type`, `tuple_type`, `dict_type`: the input is not the
+  container. -/
+  | listType
+  | setType
+  | tupleType
+  | dictType
+  /-- `too_short` / `too_long` for a container; `fieldType` is `List`,
+  `Tuple`, `Set` or `Dict`. -/
+  | tooShort (fieldType : String) (minLength actualLength : Nat)
+  | tooLong (fieldType : String) (maxLength actualLength : Nat)
+  /-- `literal_error`: not one of the allowed values, `expected` rendered as
+  pydantic renders it (`'a', 'b' or 'c'`). -/
+  | literalError (expected : String)
+  /-- `enum`: not a member of the enumeration. -/
+  | enum (expected : String)
+  /-- `decimal_*`: pydantic's `Decimal` checks. -/
+  | decimalType
+  | decimalParsing
+  | decimalMaxDigits (maxDigits : Nat)
+  | decimalMaxPlaces (decimalPlaces : Nat)
+  | decimalWholeDigits (wholeDigits : Nat)
+  /-- `extra_forbidden`: a member no field names, under `extra='forbid'`. -/
+  | extraForbidden
   /-- `value_error`: a failed constraint outside pydantic's own vocabulary
   (Keel's `or`, `not`, `oneOf`), reported as an after-validator's
   `ValueError` would be. -/

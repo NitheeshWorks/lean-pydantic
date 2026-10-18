@@ -73,7 +73,9 @@ instance : LawfulJson Int where
   fromJson_toJson _ _ := rfl
   schema_sound cfg j a hs h := by
     rw [fromJson_int, liftKind_ok, hs] at h
-    rw [int_strict h]; rfl
+    rw [int_strict h]
+    show Schema.check (.integer []) _ = true
+    simp [Schema.check, JsonKind.isIntegral, Num.isIntegral]
   errors_ne_nil cfg j := liftKind_ne_nil cfg j _
 
 instance : LawfulJson Nat where
@@ -92,21 +94,27 @@ instance : LawfulJson Decimal where
   fromJson_toJson _ _ := rfl
   schema_sound cfg j a hs h := by
     rw [fromJson_decimal, liftKind_ok, hs] at h
-    obtain ⟨n, rfl, -, -⟩ := float_strict h; rfl
+    obtain ⟨n, rfl, -, -⟩ := float_strict h
+    show Schema.check (.number []) _ = true
+    simp [Schema.check, JsonKind.isNum]
   errors_ne_nil cfg j := liftKind_ne_nil cfg j _
 
 instance : LawfulJson Bool where
   fromJson_toJson _ _ := rfl
   schema_sound cfg j a hs h := by
     rw [fromJson_bool, liftKind_ok, hs] at h
-    rw [bool_strict h]; rfl
+    rw [bool_strict h]
+    show Schema.check .boolean _ = true
+    simp [Schema.check, JsonKind.isBool]
   errors_ne_nil cfg j := liftKind_ne_nil cfg j _
 
 instance : LawfulJson String where
   fromJson_toJson _ _ := rfl
   schema_sound cfg j a _ h := by
     rw [fromJson_string, liftKind_ok] at h
-    rw [str_strict h]; rfl
+    rw [str_strict h]
+    show Schema.check (.string []) _ = true
+    simp [Schema.check, JsonKind.isStr]
   errors_ne_nil cfg j := liftKind_ne_nil cfg j _
 
 instance : NonNull Int := ⟨fun _ _ => nofun⟩

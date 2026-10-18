@@ -69,37 +69,59 @@ theorem member_error [FromJson α] [JsonSchema α] [ToJson α] [LawfulJson α] {
   · obtain ⟨e', -, rfl⟩ := List.mem_map.1 he
     exact ⟨e'.loc, rfl⟩
 
-theorem keep_default (name : String) (v : Json) (b : Bool) : keep {} name v b = true := by
-  simp [keep]
+theorem keep_roundTrip (name : String) (v : Json) (b s : Bool) :
+    keep DumpOpts.roundTrip name v b s = true := by
+  simp [keep, DumpOpts.roundTrip]
 
-theorem encode_field [FromJson α] [ToJson α] [JsonSchema α] (name : String) (d : Option α)
-    (rest : Fields β) (a : α) (b : β) :
-    (field name d rest).encode {} (a, b) = (name, toJson {} a) :: rest.encode {} b := by
-  simp [field, keep_default, DumpOpts.nested]
+theorem encode_field [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
+    (d : Option α) (rest : Fields β) (a : α) (b : β) :
+    (field name alias d rest).encode DumpOpts.roundTrip (a, b) =
+      (alias.getD name, toJson DumpOpts.roundTrip a) :: rest.encode DumpOpts.roundTrip b := by
+  simp only [field, keep_roundTrip, ite_true]
+  rfl
+
+theorem field_keys [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
+    (d : Option α) (rest : Fields β) : (field name alias d rest).keys = alias.getD name :: rest.keys := rfl
+
+theorem field_decode [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
+    (d : Option α) (rest : Fields β) (cfg : Cfg) (j : Json) :
+    (field name alias d rest).decode cfg j =
+      Keel.Validator.both (member cfg j (alias.getD name) d) (rest.decode cfg j) := rfl
+
+theorem field_props [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
+    (d : Option α) (rest : Fields β) :
+    ∃ t df, (field name alias d rest).props =
+      (alias.getD name, .annotated (JsonSchema.schema α) t df) :: rest.props := ⟨_, _, rfl⟩
+
+theorem field_required [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
+    (d : Option α) (rest : Fields β) :
+    (field name alias d rest).required =
+      if d.isSome then rest.required else alias.getD name :: rest.required := rfl
 
 /-! ## The laws -/
 
 theorem nil_lawful : Fields.nil.Lawful where
   decode_encode _ _ _ _ _ := rfl
   encode_keys _ := rfl
-  sound _ _ _ _ _ _ := ⟨rfl, fun _ h => nomatch h⟩
+  sound _ _ _ _ _ _ := ⟨by simp [nil, Schema.checkProps], fun _ h => nomatch h⟩
   ne_nil _ _ _ := nofun
   loc_key _ _ _ _ h := nomatch h
 
 /-- **The field combinator is lawful.** -/
 theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {name : String}
-    {d : Option α} {rest : Fields β} (hfresh : name ∉ rest.keys) (hr : rest.Lawful) :
-    (field name d rest).Lawful where
+    {alias : Option String} {d : Option α} {rest : Fields β} (hfresh : alias.getD name ∉ rest.keys)
+    (hr : rest.Lawful) : (field name alias d rest).Lawful where
   decode_encode cfg j p kvs h := by
     obtain ⟨a, b⟩ := p
-    have hk : ∀ k ∈ rest.keys, lookupLast k kvs = lookupLast k (rest.encode {} b) := by
+    rw [field_keys] at h
+    have hk : ∀ k ∈ rest.keys, lookupLast k kvs = lookupLast k (rest.encode DumpOpts.roundTrip b) := by
       intro k hk
       rw [h k (List.mem_cons_of_mem _ hk), encode_field,
-        lookupLast_cons_ne (fun (e : name = k) => hfresh (e ▸ hk))]
-    have hn : lookupLast name kvs = some (toJson {} a) := by
-      rw [h name List.mem_cons_self, encode_field, lookupLast_cons_self (by rw [hr.encode_keys]; exact hfresh)]
-    show Keel.Validator.both _ _ kvs = _
-    rw [Keel.Validator.both_ok_iff]
+        lookupLast_cons_ne (fun (e : alias.getD name = k) => hfresh (e ▸ hk))]
+    have hn : lookupLast (alias.getD name) kvs = some (toJson DumpOpts.roundTrip a) := by
+      rw [h _ List.mem_cons_self, encode_field,
+        lookupLast_cons_self (by rw [hr.encode_keys]; exact hfresh)]
+    rw [field_decode, Keel.Validator.both_ok_iff]
     refine ⟨?_, hr.decode_encode cfg j b kvs hk⟩
     unfold member
     rw [Keel.Validator.at_ok_iff]
@@ -107,23 +129,24 @@ theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {
     exact LawfulJson.fromJson_toJson cfg a
   encode_keys p := by
     obtain ⟨a, b⟩ := p
-    rw [encode_field]; simp [hr.encode_keys b]; rfl
+    rw [encode_field, field_keys]; simp [hr.encode_keys b]
   sound cfg j kvs p hs h := by
     obtain ⟨a, b⟩ := p
-    change Keel.Validator.both _ _ kvs = _ at h
+    rw [field_decode] at h
     obtain ⟨hm, hrest⟩ := (Keel.Validator.both_ok_iff _ _ _ _ _).1 h
     obtain ⟨hp, hreq⟩ := hr.sound cfg j kvs b hs hrest
     have hmo := member_ok hm
     refine ⟨?_, ?_⟩
-    · show (_ && _) = true
-      rw [hp, Bool.and_true]
+    · obtain ⟨t, df, hpr⟩ := field_props name alias d rest
+      rw [hpr]
+      simp only [Schema.checkProps, hp, Bool.and_true]
       split
       · rename_i v hv; rw [hv] at hmo
+        simp only [Schema.check]
         exact LawfulJson.schema_sound cfg v a hs hmo
       · rfl
     · intro r hr'
-      show (lookupLast r kvs).isSome = true
-      simp only [field] at hr'
+      rw [field_required] at hr'
       split at hr'
       · exact hreq r hr'
       · rename_i hd
@@ -133,10 +156,10 @@ theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {
           · subst hmo; simp at hd
         · exact hreq r hr'
   ne_nil cfg j kvs h := by
-    change Keel.Validator.both _ _ kvs = _ at h
+    rw [field_decode] at h
     have := Keel.Validator.both_error _ _ _ _ h
     revert this
-    cases hm : member cfg j name d kvs with
+    cases hm : member cfg j (alias.getD name) d kvs with
     | error e =>
       have := (member_error hm).1
       cases hw : rest.decode cfg j kvs <;> simp_all
@@ -145,15 +168,16 @@ theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {
       | error e => intro he; simp only [List.nil_append] at he; subst he; exact hr.ne_nil cfg j kvs hw
       | ok b => simp [Keel.Validator.both, hm, hw] at h
   loc_key cfg j kvs es h := by
-    change Keel.Validator.both _ _ kvs = _ at h
+    rw [field_decode] at h
     have hes := Keel.Validator.both_error _ _ _ _ h
     intro e he
     rw [hes, List.mem_append] at he
+    rw [field_keys]
     rcases he with he | he
     · split at he
       · rename_i es' hm
         obtain ⟨l, hl⟩ := (member_error hm).2 e he
-        exact ⟨name, List.mem_cons_self, l, hl⟩
+        exact ⟨_, List.mem_cons_self, l, hl⟩
       · simp at he
     · split at he
       · rename_i es' hw
