@@ -751,6 +751,56 @@ theorem strAsNumber_eq (s : String) : strAsNumber s = strAsNumberChars s.toList 
     simp [strAsNumberChars, ht, rustFloat?_of_numParts hp]
   · rfl
 
+/-- The number the scan read, with the mantissa (and a huge exponent) cut to
+`DigAcc.trunc`'s leading digits and sticky digit: exact when nothing is cut
+(`floatDecimal_exact`), and otherwise within the same 10^(k+1)-wide step
+as the exact value (`DigAcc.trunc_spec`). -/
+def floatDecimal (st : NumScan.St) : Decimal :=
+  let (mm, mk) := st.m.trunc
+  let (em, ek) := st.e.trunc
+  let ev : Nat := em * 10 ^ ek
+  Decimal.normalize st.neg mm ((if st.eneg then -(ev : Int) else ev) - st.frac + mk)
+
+/-- pydantic-core's `str_as_float` for a plain `float`, to the double: a
+plain number is read in place and only its leading 769 or more significant
+digits and a sticky digit are converted, so a long string costs one pass;
+anything else goes through `strAsNumberChars`. Equal to
+`(strAsNumber s).map Number.toFloat` when nothing is cut
+(`strAsDouble_exact`); with a cut, the double is the same because no binary64
+rounding boundary has more than 767 significant digits (tested in
+`tests/Props.lean` on constructed halfway cases). -/
+def strAsDouble (s : String) : Except ErrorKind Float :=
+  let st := s.foldl NumScan.St.step {}
+  if st.accepts then .ok (Number.toFloat (.float (floatDecimal st)))
+  else (strAsNumberChars s.toList).map Number.toFloat
+
+theorem floatDecimal_exact (st : NumScan.St) (hm : st.m.trunc.2 = 0) (he : st.e.trunc.2 = 0) :
+    floatDecimal st = partsDecimal ⟨st.neg, st.m.val, st.frac,
+      if st.eneg then -(st.e.val : Int) else st.e.val⟩ := by
+  have h1 := st.m.trunc_exact hm
+  have h2 := st.e.trunc_exact he
+  unfold floatDecimal partsDecimal
+  generalize hM : st.m.trunc = M at hm h1
+  generalize hE : st.e.trunc = E at he h2
+  obtain ⟨mm, mk⟩ := M
+  obtain ⟨em, ek⟩ := E
+  simp only at hm h1 he h2 ⊢
+  subst hm he h1 h2
+  cases st.eneg <;> simp <;> omega
+
+theorem strAsDouble_exact (s : String)
+    (hm : (s.foldl NumScan.St.step {}).m.trunc.2 = 0) (he : (s.foldl NumScan.St.step {}).e.trunc.2 = 0) :
+    strAsDouble s = (strAsNumber s).map Number.toFloat := by
+  have hf := NumScan.St.finish_of_accepts (s.foldl NumScan.St.step {})
+  unfold strAsDouble strAsNumber NumScan.numScan
+  generalize s.foldl NumScan.St.step {} = st at hm he hf ⊢
+  by_cases ha : st.accepts = true
+  · simp only [ha, ↓reduceIte] at hf ⊢
+    rw [hf]
+    simp [floatDecimal_exact st hm he, Except.map]
+  · simp only [ha, Bool.false_eq_true, ↓reduceIte] at hf ⊢
+    rw [hf]
+
 /-- pydantic-core's `str_as_bool`. -/
 def strAsBool (s : String) : Except ErrorKind Bool :=
   let l := String.ofList (s.toList.map Char.toLower)

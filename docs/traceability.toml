@@ -404,13 +404,15 @@ status = "implemented"
 realises = ["LeanPydantic.dedupIdx", "LeanPydantic.nodupFast", "LeanPydantic.validateMembersFast",
   "LeanPydantic.Coerce.strAsInt", "LeanPydantic.Dec.ltCore", "LeanPydantic.Dec.dvdCore",
   "LeanPydantic.NumScan.numScan", "LeanPydantic.NumScan.digitsVal", "LeanPydantic.Coerce.strAsFloat",
-  "LeanPydantic.Coerce.strAsNumber", "LeanPydantic.PyDecimal.parse"]
+  "LeanPydantic.Coerce.strAsNumber", "LeanPydantic.PyDecimal.parse", "LeanPydantic.Coerce.strAsDouble",
+  "LeanPydantic.NumScan.DigAcc.trunc"]
 theorem = ["LeanPydantic.dedupIdx_eq", "LeanPydantic.nodupFast_iff", "LeanPydantic.validateMembersFast_eq",
   "LeanPydantic.Dec.ltCore_iff", "LeanPydantic.Dec.dvdCore_iff", "LeanPydantic.Num.lt_iff_core",
   "LeanPydantic.Coerce.strAsInt_eq", "LeanPydantic.NumScan.numScan_eq", "LeanPydantic.NumScan.digitsVal_eq",
-  "LeanPydantic.Coerce.strAsFloat_eq", "LeanPydantic.Coerce.strAsNumber_eq", "LeanPydantic.PyDecimal.parse_eq"]
+  "LeanPydantic.Coerce.strAsFloat_eq", "LeanPydantic.Coerce.strAsNumber_eq", "LeanPydantic.PyDecimal.parse_eq",
+  "LeanPydantic.NumScan.DigAcc.trunc_spec", "LeanPydantic.Coerce.strAsDouble_exact"]
 test = ["tests/Bench.lean::benches", "tests/Props.lean::properties"]
-notes = "Bounds in tests/Bench.lean against pydantic-core 2.14.1 on the same machine; run by check.sh and CI."
+notes = "Bounds in tests/Bench.lean against pydantic-core 2.14.1 on the same machine; run by check.sh and CI. float from a string converts only the leading 769+ significant digits and a sticky digit (NumScan.DigAcc.trunc, trunc_spec; the equal double is tested on halfway cases, not proved: Lean's Float.Model rounding has no real-valued specification), so it is linear (13 ms per MiB, about 60x pydantic-core). PyDecimal and the exact Decimal keep a binary Nat coefficient: the base conversion is an O(M(n) log n) product tree, 2.1x per doubling, about 33x pydantic (libmpdec keeps base-10^19 limbs)."
 
 [[requirement]]
 id = "decimal.multiple-of-exact"

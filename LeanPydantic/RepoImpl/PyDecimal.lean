@@ -386,7 +386,7 @@ def Scalar.plainFloat (strict : Bool) (python : Bool) : Json → Except ErrorKin
     if python && x.isInf then .error .floatType else .ok x
   | .num n => .ok n.toFloat
   | .bool b => if strict then .error .floatType else .ok (if b then 1 else 0)
-  | .str s => if strict then .error .floatType else (Coerce.strAsNumber s).map Number.toFloat
+  | .str s => if strict then .error .floatType else Coerce.strAsDouble s
   | _ => .error .floatType
 
 instance : FromJson Float := ⟨"float", fun cfg j => liftKind cfg j (Scalar.plainFloat cfg.strict (cfg.mode = .python) j), fun _ => true⟩

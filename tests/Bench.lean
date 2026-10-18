@@ -26,16 +26,22 @@ The bounds are set against pydantic-core 2.14.1 on the same machine
 | set, 200 000 items, parsed | 6.2 ms | 22-24 ms | 50 ms |
 | `^(a{1,50})+$`, 10 000 / 20 000 characters | 0.03 / 0.06 ms | 94 / 94 ms | 300 ms |
 | `(a\|b)` ×50 then `c`, 50 000 / 100 000 characters | 0.15 / 0.33 ms | 24 / 27 ms | 100 ms |
-| `float` from a 1 MiB digit string (also `+ ".5e-3"`) | 0.21-0.22 ms | 97-123 ms | 1000 ms |
-| `Decimal` from a 1 MiB digit string (also `+ ".5"`) | 3.6 ms | 97-100 ms | 1000 ms |
+| `float` from a 1 / 2 / 4 MiB digit string | 0.22 / 0.44 / 0.92 ms | 13 / 26 / 52 ms | 60 / 120 / 240 ms |
+| `float` from 1 MiB digits `+ ".5e-3"`, or after `"0."` and 300 zeros | 0.21 / 0.23 ms | 13 / 20 ms | 60 ms |
+| `Decimal` from a 1 / 2 / 4 MiB digit string | 3.6 / 7.5 / 14.8 ms | 102-118 / 243 / 525 ms | 300 / 700 / 1500 ms |
 
-The 1 MiB `float` and `Decimal` rows are read in place (`NumScan.numScan`,
-one `String.foldl` into 16-digit chunks, 14 ms) and the chunks combined by a
-product tree into the exact coefficient (84 ms). Both keep the exact value,
-so the binary conversion is the floor: pydantic-core's `float` reads the
-digits into a rounded double (about 440x faster here) and Python's
-`Decimal` keeps base-10 limbs (about 27x). Within 2x is not feasible without
-dropping exactness; the ratios are recorded instead.
+`float` and `Decimal` strings are read in place (`NumScan.numScan`, one
+`String.foldl` into 16-digit chunks, about 13 ms per MiB).
+`float` then converts only the leading 769 or more significant digits and a
+sticky digit (`DigAcc.trunc`): no binary64 rounding boundary has more than
+767 significant digits, so the double is the exact text's (tested on
+constructed halfway cases in `tests/Props.lean`, pinned against pydantic in
+`tests/Conformance.lean`). It is linear, at the scan's cost: about 60x
+pydantic-core, whose reader is a vectorised byte scan. `Decimal` keeps
+the exact coefficient as a binary `Nat`, so the base conversion is inherent:
+a product tree, `O(M(n) log n)`, growing 2.1x per doubling here (CPython's
+libmpdec keeps base-10^19 limbs and is linear): about 33x pydantic at 1 to
+4 MiB. The exact `Decimal` field type (`FiniteFloat`) converts the same way.
 
 Of `validate_json`'s time on the dict, 50 ms of 78 is lean-json's parser.
 Neither side is exactly linear past 100 000 keys: pydantic-core's own times
@@ -184,11 +190,17 @@ def benches : List Bench :=
     ⟨"int, \"+\" + 1 MiB digits", 30, "+" ++ digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,
     ⟨"int, \"7_\" + 1 MiB digits", 30, "7_" ++ digits 1048576, fun s => rejects (ti.validate_python (.str s))⟩,
     ⟨"int, 1 MiB digits + \" \"", 30, digits 1048576 ++ " ", fun s => rejects (ti.validate_python (.str s))⟩,
-    -- float and Decimal from a long string: read in place (NumScan), then one product tree
-    ⟨"float, 1 MiB digit string, lax (validate_python)", 1000, digits 1048576, fun s => accepts (tf.validate_python (.str s))⟩,
-    ⟨"float, 1 MiB digits + \".5e-3\", lax (validate_python)", 1000, digits 1048576 ++ ".5e-3", fun s => accepts (tf.validate_python (.str s))⟩,
-    ⟨"Decimal, 1 MiB digit string (validate_python)", 1000, digits 1048576, fun s => accepts (tpd.validate_python (.str s))⟩,
-    ⟨"Decimal, 1 MiB digits + \".5\" (validate_python)", 1000, digits 1048576 ++ ".5", fun s => accepts (tpd.validate_python (.str s))⟩,
+    -- float from a long string: one in-place pass, only the leading 769+
+    -- significant digits converted (linear); Decimal: exact, by a product tree
+    ⟨"float, 1 MiB digit string, lax (validate_python)", 60, digits 1048576, fun s => accepts (tf.validate_python (.str s))⟩,
+    ⟨"float, 2 MiB digit string, lax (validate_python)", 120, digits 2097152, fun s => accepts (tf.validate_python (.str s))⟩,
+    ⟨"float, 4 MiB digit string, lax (validate_python)", 240, digits 4194304, fun s => accepts (tf.validate_python (.str s))⟩,
+    ⟨"float, 1 MiB digits + \".5e-3\", lax (validate_python)", 60, digits 1048576 ++ ".5e-3", fun s => accepts (tf.validate_python (.str s))⟩,
+    ⟨"float, \"0.\" + 300 zeros + 1 MiB digits, lax (validate_python)", 60, "0." ++ String.ofList (List.replicate 300 '0') ++ digits 1048576, fun s => accepts (tf.validate_python (.str s))⟩,
+    ⟨"Decimal, 1 MiB digit string (validate_python)", 300, digits 1048576, fun s => accepts (tpd.validate_python (.str s))⟩,
+    ⟨"Decimal, 2 MiB digit string (validate_python)", 700, digits 2097152, fun s => accepts (tpd.validate_python (.str s))⟩,
+    ⟨"Decimal, 4 MiB digit string (validate_python)", 1500, digits 4194304, fun s => accepts (tpd.validate_python (.str s))⟩,
+    ⟨"Decimal, 1 MiB digits + \".5\" (validate_python)", 300, digits 1048576 ++ ".5", fun s => accepts (tpd.validate_python (.str s))⟩,
     ⟨"int, 4300-digit string, lax (validate_python)", 50, digits 4300, fun s =>
       match ti.validate_python (.str s) with
       | .ok _ => true

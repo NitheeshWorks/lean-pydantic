@@ -55,7 +55,12 @@ for name, pat, text in [('^(a{1,50})+$, 10 000', r'^(a{1,50})+$', 'a' * 10000),
 # float and Decimal from a 1 MiB string (Lean: validate_python on the string)
 from decimal import Decimal
 digits = '7' * 1048576
-for name, ta, text in [('float, 1 MiB digit string', TypeAdapter(float), digits),
+for name, ta, text in [('float, 2 MiB digit string', TypeAdapter(float), digits * 2),
+                       ('float, 4 MiB digit string', TypeAdapter(float), digits * 4),
+                       ('float, "0." + 300 zeros + 1 MiB digits', TypeAdapter(float), '0.' + '0' * 300 + digits),
+                       ('Decimal, 2 MiB digit string', TypeAdapter(Decimal), digits * 2),
+                       ('Decimal, 4 MiB digit string', TypeAdapter(Decimal), digits * 4),
+                       ('float, 1 MiB digit string', TypeAdapter(float), digits),
                        ('float, 1 MiB digits + ".5e-3"', TypeAdapter(float), digits + '.5e-3'),
                        ('Decimal, 1 MiB digit string', TypeAdapter(Decimal), digits),
                        ('Decimal, 1 MiB digits + ".5"', TypeAdapter(Decimal), digits + '.5')]:

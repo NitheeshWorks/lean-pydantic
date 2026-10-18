@@ -85,7 +85,13 @@ Listed here with the reason, and in `docs/traceability.toml` with
   `strAsInt_eq`, `strAsFloat_eq`, `strAsNumber_eq` and `PyDecimal.parse_eq`
   (a plain number is read by `NumScan.numScan`, a `String.foldl`, proved
   equal to the `span` grammar by `numScan_eq`; digits are combined by a
-  product tree, `digitsVal_eq`).
+  product tree, `digitsVal_eq`). Plain `float` from a string
+  (`strAsDouble`) converts only the leading 769+ significant digits and a
+  sticky digit: `DigAcc.trunc_spec` states what is kept and
+  `strAsDouble_exact` that nothing changes when nothing is cut; that the
+  double is the same after a cut is tested (halfway cases in `Props`), as
+  Lean's `Float.Model` rounding has no real-valued specification to prove
+  it against.
 * **Error JSON layout** (`ValidationError.json`, `ErrorDetails.toJson`): a
   formatting question, checked byte for byte against pydantic.
 * **The JSON-text round trip** (`model_validate_json (model_dump_json a)`):

@@ -355,6 +355,21 @@ def handCases : List Case := [
       check "[true, false, false, false]" (toString answers)
       <&&> check "error" refused
       <&&> check "10000" (toString Regex.maxLeaves) },
+  { upstream := "pydantic-core/tests/validators/test_float.py::test_float"
+    name := "float from long strings: halfway ties, a tie broken past 1000 digits, 1 MiB"
+    run := do
+      -- values from pydantic 2.14.1's TypeAdapter(float).validate_python, as bits
+      let ta := TypeAdapter.new Float
+      let mid := "1.00000000000000011102230246251565404236316680908203125"
+      let bits (s : String) : String := match ta.validate_python (.str s) with
+        | .ok x => toString x.val.toBits
+        | .error _ => "error"
+      check "4607182418800017408" (bits mid)
+      <&&> check "4607182418800017409" (bits (mid ++ String.ofList (List.replicate 1000 '0') ++ "1"))
+      <&&> check "4607182418800017408" (bits ((mid.dropEnd 1).toString ++ "4" ++ String.ofList (List.replicate 1000 '9')))
+      <&&> check "9218868437227405312" (bits (String.ofList (List.replicate 1048576 '7')))
+      <&&> check "117281590732642743"
+        (bits ("0." ++ String.ofList (List.replicate 300 '0') ++ String.ofList (List.replicate 1048576 '7'))) },
   { upstream := "pydantic/tests/test_main.py::test_ultra_simple_failed"
     name := "errors without url, context, input"
     run := do

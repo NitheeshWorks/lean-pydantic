@@ -88,6 +88,37 @@ def Rng.digits (r : Rng) : List Char × Rng := Id.run do
     cs := Char.ofNat (48 + d) :: cs
   return (cs, r)
 
+
+/-- `n / 10 ^ p` written out in decimal (`p` places after the point). -/
+def decimalText (n p : Nat) : String :=
+  let ds := toString n
+  if p = 0 then ds
+  else
+    let ds := String.ofList (List.replicate (p + 1 - min ds.length (p + 1)) '0') ++ ds
+    (ds.take (ds.length - p)).toString ++ "." ++ (ds.drop (ds.length - p)).toString
+
+/-- A halfway case and its neighbours: the midpoint between a random finite
+positive double and the next one up, exactly, as `A / 10 ^ p`; then
+`A * 10 ^ K` and that plus and minus one, at `p + K` places, so the text runs
+past the 769 kept digits and the tie is broken (or not) far beyond them. -/
+def Rng.halfway (r : Rng) : List String × Rng :=
+  let (v, r) := r.next
+  let bits := v &&& 0x7FEFFFFFFFFFFFFF
+  let be := ((bits >>> 52) &&& 0x7FF).toNat
+  let frac := (bits &&& 0xFFFFFFFFFFFFF).toNat
+  let (m, e) : Nat × Int := if be = 0 then (frac, -1074) else (frac + 2 ^ 52, (be : Int) - 1075)
+  -- midpoint (2m + 1) * 2 ^ (e - 1)
+  let f := e - 1
+  let (A, p) : Nat × Nat :=
+    if f ≥ 0 then ((2 * m + 1) * 2 ^ f.toNat, 0) else ((2 * m + 1) * 5 ^ f.natAbs, f.natAbs)
+  let (K, r) := r.nat 1500
+  let big := A * 10 ^ K
+  let texts := [decimalText A p, decimalText big (p + K), decimalText (big + 1) (p + K),
+    decimalText (big - 1) (p + K),
+    toString (big + 1) ++ "e-" ++ toString (p + K), toString (big - 1) ++ "E-" ++ toString (p + K),
+    "-" ++ decimalText (big + 1) (p + K), "000" ++ decimalText (big - 1) (p + K)]
+  (texts, r)
+
 def properties : List Property := [
   -- the balanced digit conversion is the left-to-right one
   prop "digitsVal is the left-to-right digit fold, up to 5000 digits"
@@ -116,6 +147,16 @@ def properties : List Property := [
         | _ => false
       | .error _ => false)
     toString,
+  -- float(str) on long text: only the leading 769+ significant digits and a
+  -- sticky digit are converted; the double must be the exact text's double,
+  -- checked on midpoints between adjacent doubles and their neighbours
+  prop "strAsDouble on halfway cases is the exact conversion"
+    (fun r => r.halfway)
+    (fun ts => ts.all fun t =>
+      match Coerce.strAsDouble t, (Coerce.strAsNumber t).map LeanJson.Number.toFloat with
+      | .ok x, .ok y => x.toBits == y.toBits
+      | _, _ => false)
+    (fun ts => toString (ts.map fun t => t.take 40)),
   -- a printed schema has its keys sorted at every level but `properties`
   prop "model_json_schema keys are sorted"
     (fun r => ((), r))

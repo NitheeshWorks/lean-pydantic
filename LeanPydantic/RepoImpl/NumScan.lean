@@ -623,6 +623,299 @@ theorem afterSign_head {neg : Bool} {r : List Char} {p : Parts} (h : afterSign n
           unfold fracSplit; split <;> simp_all
         simp [afterSign, span_eq, hc, h1] at h
 
+/-! ## Truncation, for a correctly rounded double
+
+A binary64 rounding boundary (a midpoint between adjacent doubles, or the
+edge of the range) has at most 767 significant decimal digits. So keeping
+the first 769 or more significant digits and a sticky digit for whatever
+nonzero digits follow leaves the value between the same two boundaries:
+`DigAcc.trunc` keeps 49 chunks from the first nonzero one (at least
+769 digits), and `trunc_spec` states what it keeps. That the double is then
+the same is tested, not proved: Lean's `Float.Model` rounding has no
+real-valued specification to prove it against. -/
+
+/-- The first index at or after `i` whose chunk is nonzero (or the size). -/
+def zerosFrom (arr : Array Nat) (i : Nat) : Nat :=
+  if h : i < arr.size then (if arr[i] = 0 then zerosFrom arr (i + 1) else i) else i
+termination_by arr.size - i
+
+/-- Whether some chunk at or after `i` is nonzero. -/
+def anyNZ (arr : Array Nat) (i : Nat) : Bool :=
+  if h : i < arr.size then arr[i] != 0 || anyNZ arr (i + 1) else false
+termination_by arr.size - i
+
+/-- How many chunks are kept: 49 of 16 digits, the first with at least one
+significant digit, so at least 769 significant digits. -/
+def keepChunks : Nat := 49
+
+/-- The value from chunk `z` on (equal to `val` when the chunks before `z`
+are zero, `val_from`). -/
+def DigAcc.valFrom (a : DigAcc) (z : Nat) : Nat :=
+  radixTree chunkBase (fun i => a.chunks.getD i 0) z (a.chunks.size - z) * 10 ^ a.len + a.cur
+
+/-- `(m, k)` with the value about `m * 10 ^ k`: exact (`k = 0`) when at
+most `keepChunks` chunks follow the leading zero chunks; otherwise the kept
+chunks, then one sticky digit, `1` when any later digit is nonzero. -/
+def DigAcc.trunc (a : DigAcc) : Nat × Nat :=
+  let z := zerosFrom a.chunks 0
+  if a.chunks.size ≤ z + keepChunks then (a.valFrom z, 0)
+  else
+    let R := radixTree chunkBase (fun i => a.chunks.getD i 0) z keepChunks
+    let sticky := anyNZ a.chunks (z + keepChunks) || a.cur != 0
+    (R * 10 + (if sticky then 1 else 0), 16 * (a.chunks.size - z - keepChunks) + a.len - 1)
+
+theorem zerosFrom_spec (arr : Array Nat) (i : Nat) :
+    i ≤ zerosFrom arr i ∧ ∀ j, i ≤ j → j < zerosFrom arr i → arr.getD j 0 = 0 := by
+  induction i using zerosFrom.induct arr with
+  | case1 i h h0 ih =>
+    rw [zerosFrom]; simp only [h, h0, ↓reduceDIte, ↓reduceIte]
+    refine ⟨by omega, fun j hj hj' => ?_⟩
+    by_cases e : j = i
+    · subst e; simp [Array.getD_eq_getD_getElem?, h, h0]
+    · exact ih.2 j (by omega) hj'
+  | case2 i h h0 =>
+    rw [zerosFrom]; simp only [h, h0, ↓reduceDIte, ↓reduceIte]
+    exact ⟨Nat.le_refl _, fun j hj hj' => absurd hj' (by omega)⟩
+  | case3 i h =>
+    rw [zerosFrom]; simp only [h, ↓reduceDIte]
+    exact ⟨Nat.le_refl _, fun j hj hj' => absurd hj' (by omega)⟩
+
+theorem anyNZ_false (arr : Array Nat) (i : Nat) :
+    anyNZ arr i = false ↔ ∀ j, i ≤ j → arr.getD j 0 = 0 := by
+  induction i using anyNZ.induct arr with
+  | case1 i h ih =>
+    rw [anyNZ]; simp only [h, ↓reduceDIte]
+    simp only [Bool.or_eq_false_iff, bne_eq_false_iff_eq, ih]
+    constructor
+    · rintro ⟨h0, hr⟩ j hj
+      by_cases e : j = i
+      · subst e; simp [Array.getD_eq_getD_getElem?, h, h0]
+      · exact hr j (by omega)
+    · intro hr
+      refine ⟨?_, fun j hj => hr j (by omega)⟩
+      have := hr i (Nat.le_refl _)
+      simpa [Array.getD_eq_getD_getElem?, h] using this
+  | case2 i h =>
+    rw [anyNZ]; simp only [h, ↓reduceDIte]
+    simp only [true_iff]
+    intro j hj
+    simp [Array.getD_eq_getD_getElem?, show ¬ j < arr.size by omega]
+
+theorem radixVal_zero (B : Nat) (c : Nat → Nat) (lo n : Nat) (h : ∀ i, lo ≤ i → i < lo + n → c i = 0) :
+    radixVal B c lo n = 0 := by
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+    rw [radixVal_add, ih (fun i h1 h2 => h i h1 (by omega))]
+    simp [radixVal, List.range'_succ, h (lo + n) (by omega) (by omega)]
+
+theorem radixVal_eq_zero (B : Nat) (hB : 0 < B) (c : Nat → Nat) (lo n : Nat) :
+    radixVal B c lo n = 0 ↔ ∀ i, lo ≤ i → i < lo + n → c i = 0 := by
+  refine ⟨fun h => ?_, radixVal_zero B c lo n⟩
+  induction n with
+  | zero => intro i h1 h2; omega
+  | succ n ih =>
+    rw [radixVal_add] at h
+    have h1 : radixVal B c (lo + n) 1 = c (lo + n) := by simp [radixVal, List.range'_succ]
+    rw [h1, Nat.pow_one] at h
+    have ha : radixVal B c lo n * B = 0 := by omega
+    have hb : c (lo + n) = 0 := by omega
+    have hz : radixVal B c lo n = 0 := by
+      rcases Nat.mul_eq_zero.mp ha with h | h
+      · exact h
+      · omega
+    intro i hi1 hi2
+    by_cases e : i = lo + n
+    · subst e; exact hb
+    · exact ih hz i hi1 (by omega)
+
+theorem radixVal_lt (B : Nat) (c : Nat → Nat) (lo n : Nat) (h : ∀ i, c i < B) :
+    radixVal B c lo n < B ^ n := by
+  induction n with
+  | zero => simp [radixVal]
+  | succ n ih =>
+    rw [radixVal_add]
+    have h1 : radixVal B c (lo + n) 1 = c (lo + n) := by simp [radixVal, List.range'_succ]
+    rw [h1, Nat.pow_one, Nat.pow_succ]
+    have := h (lo + n)
+    have h2 : radixVal B c lo n + 1 ≤ B ^ n := ih
+    calc radixVal B c lo n * B + c (lo + n) < radixVal B c lo n * B + B := by omega
+      _ = (radixVal B c lo n + 1) * B := by rw [Nat.add_mul, Nat.one_mul]
+      _ ≤ B ^ n * B := Nat.mul_le_mul_right _ h2
+
+/-- Every chunk under `10 ^ 16`, and the open chunk under `10 ^ len`. -/
+def DigAcc.WF (a : DigAcc) : Prop :=
+  (∀ i, a.chunks.getD i 0 < chunkBase) ∧ a.cur < 10 ^ a.len ∧ a.len ≤ 15
+
+theorem DigAcc.wf_empty : ({} : DigAcc).WF := by
+  refine ⟨fun i => ?_, by decide, by decide⟩
+  simp [chunkBase]
+
+theorem DigAcc.wf_push (a : DigAcc) (d : Nat) (hd : d < 10) (h : a.WF) : (a.push d).WF := by
+  obtain ⟨h1, h2, h3⟩ := h
+  unfold DigAcc.push
+  split
+  · rename_i hl
+    refine ⟨fun i => ?_, by simp, by simp⟩
+    rw [hl] at h2
+    have hc : a.cur * 10 + d < chunkBase := by
+      simp only [chunkBase]; rw [show (10 : Nat) ^ 15 = 1000000000000000 by decide] at h2; omega
+    simp only [Array.getD_eq_getD_getElem?, Array.getElem?_push]
+    split
+    · simpa using hc
+    · have := h1 i
+      simp only [Array.getD_eq_getD_getElem?] at this
+      exact this
+  · rename_i hl
+    refine ⟨h1, ?_, by dsimp only; omega⟩
+    dsimp only
+    rw [Nat.pow_succ]
+    have : a.cur + 1 ≤ 10 ^ a.len := h2
+    have : (a.cur + 1) * 10 ≤ 10 ^ a.len * 10 := Nat.mul_le_mul_right _ this
+    rw [Nat.add_mul] at this
+    omega
+
+theorem DigAcc.val_from (a : DigAcc) (z : Nat) (hz : ∀ j, j < z → a.chunks.getD j 0 = 0)
+    (hz' : z ≤ a.chunks.size) : a.val = a.valFrom z := by
+  unfold DigAcc.val DigAcc.valFrom
+  rw [radixTree_eq, radixTree_eq]
+  have := radixVal_add chunkBase (fun i => a.chunks.getD i 0) 0 z (a.chunks.size - z)
+  rw [Nat.add_sub_cancel' hz', radixVal_zero _ _ 0 z (fun i _ h => hz i (by omega))] at this
+  rw [this]; simp
+
+/-- What `trunc` keeps: exactly the value, or its leading part `R` with the
+rest `r` below `10 ^ (k + 1)` replaced by one sticky digit. -/
+theorem DigAcc.trunc_spec (a : DigAcc) (h : a.WF) :
+    (a.trunc.2 = 0 ∧ a.trunc.1 = a.val) ∨
+    ∃ R r, a.val = R * 10 ^ (a.trunc.2 + 1) + r ∧ r < 10 ^ (a.trunc.2 + 1) ∧
+      a.trunc.1 = R * 10 + (if r = 0 then 0 else 1) := by
+  obtain ⟨h1, h2, h3⟩ := h
+  obtain ⟨_, hz2⟩ := zerosFrom_spec a.chunks 0
+  generalize hzdef : zerosFrom a.chunks 0 = z at hz2
+  have hzs : ∀ j, j < z → a.chunks.getD j 0 = 0 := fun j hj => hz2 j (Nat.zero_le _) hj
+  by_cases hs : a.chunks.size ≤ z + keepChunks
+  · left
+    have e : a.trunc = (a.valFrom z, 0) := by simp only [DigAcc.trunc, hzdef, hs, ↓reduceIte]
+    rw [e]
+    refine ⟨rfl, ?_⟩
+    by_cases hzle : z ≤ a.chunks.size
+    · exact (a.val_from z hzs hzle).symm
+    · have hall : ∀ j, j < a.chunks.size → a.chunks.getD j 0 = 0 := fun j hj => hzs j (by omega)
+      rw [a.val_from a.chunks.size hall (Nat.le_refl _)]
+      unfold DigAcc.valFrom
+      simp [show a.chunks.size - z = 0 by omega, radixTree_eq, radixVal]
+  · right
+    have hzle : z ≤ a.chunks.size := by omega
+    obtain ⟨rest, hrest⟩ : ∃ r, a.chunks.size - z - keepChunks = r := ⟨_, rfl⟩
+    have e : a.trunc =
+        (radixVal chunkBase (fun i => a.chunks.getD i 0) z keepChunks * 10 +
+          (if (anyNZ a.chunks (z + keepChunks) || a.cur != 0) then 1 else 0),
+        16 * rest + a.len - 1) := by
+      simp only [DigAcc.trunc, hzdef, hs, ↓reduceIte, radixTree_eq, hrest]
+    rw [e]
+    have hk : 16 * rest + a.len - 1 + 1 = 16 * rest + a.len := by omega
+    have hsplit := radixVal_add chunkBase (fun i => a.chunks.getD i 0) z keepChunks rest
+    rw [show keepChunks + rest = a.chunks.size - z by omega] at hsplit
+    have hval : a.val = radixVal chunkBase (fun i => a.chunks.getD i 0) z (a.chunks.size - z) * 10 ^ a.len + a.cur := by
+      rw [a.val_from z hzs hzle]; unfold DigAcc.valFrom; rw [radixTree_eq]
+    have hBr : chunkBase ^ rest = 10 ^ (16 * rest) := by rw [Nat.pow_mul]; rfl
+    have hTlt := radixVal_lt chunkBase (fun i => a.chunks.getD i 0) (z + keepChunks) rest h1
+    have hT0 : radixVal chunkBase (fun i => a.chunks.getD i 0) (z + keepChunks) rest = 0 ↔
+        anyNZ a.chunks (z + keepChunks) = false := by
+      rw [radixVal_eq_zero _ (by decide), anyNZ_false]
+      constructor
+      · intro h j hj
+        by_cases hj' : j < z + keepChunks + rest
+        · exact h j hj hj'
+        · simp [Array.getD_eq_getD_getElem?, show ¬ j < a.chunks.size by omega]
+      · intro h j hj _; exact h j hj
+    rw [hBr] at hsplit hTlt
+    generalize radixVal chunkBase (fun i => a.chunks.getD i 0) (z + keepChunks) rest = T at hsplit hTlt hT0
+    generalize radixVal chunkBase (fun i => a.chunks.getD i 0) z keepChunks = R at hsplit
+    refine ⟨R, T * 10 ^ a.len + a.cur, ?_, ?_, ?_⟩
+    · rw [hval, hsplit, hk, Nat.pow_add, Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
+    · rw [hk, Nat.pow_add]
+      have : T + 1 ≤ 10 ^ (16 * rest) := hTlt
+      have : (T + 1) * 10 ^ a.len ≤ 10 ^ (16 * rest) * 10 ^ a.len := Nat.mul_le_mul_right _ this
+      rw [Nat.add_mul, Nat.one_mul] at this
+      omega
+    · congr 1
+      have hpos : 0 < 10 ^ a.len := Nat.pow_pos (by decide)
+      by_cases hT : T = 0
+      · have hb : anyNZ a.chunks (z + keepChunks) = false := hT0.mp hT
+        by_cases hcur : a.cur = 0
+        · have h0 : T * 10 ^ a.len + a.cur = 0 := by rw [hT, hcur, Nat.zero_mul]
+          have hc : (a.cur != 0) = false := by rw [hcur]; rfl
+          simp only [hb, hc, Bool.false_or, Bool.false_eq_true, ↓reduceIte, eq_true h0]
+        · have h0 : ¬ T * 10 ^ a.len + a.cur = 0 := by omega
+          have hc : (a.cur != 0) = true := bne_iff_ne.mpr hcur
+          simp only [hb, hc, Bool.false_or, ↓reduceIte, eq_false h0]
+      · have hb : anyNZ a.chunks (z + keepChunks) = true := by
+          cases hb : anyNZ a.chunks (z + keepChunks)
+          · exact absurd (hT0.mpr hb) hT
+          · rfl
+        have h0 : ¬ T * 10 ^ a.len + a.cur = 0 := by
+          intro h
+          have : T * 10 ^ a.len = 0 := by omega
+          rcases Nat.mul_eq_zero.mp this with h | h
+          · exact hT h
+          · omega
+        simp only [hb, Bool.true_or, ↓reduceIte, eq_false h0]
+
+theorem DigAcc.trunc_exact (a : DigAcc) (h : a.trunc.2 = 0) : a.trunc.1 = a.val := by
+  obtain ⟨_, hz2⟩ := zerosFrom_spec a.chunks 0
+  generalize hzdef : zerosFrom a.chunks 0 = z at hz2
+  unfold DigAcc.trunc at h ⊢
+  simp only [hzdef] at h ⊢
+  split
+  · rename_i hs
+    by_cases hzle : z ≤ a.chunks.size
+    · exact (a.val_from z (fun j hj => hz2 j (Nat.zero_le _) hj) hzle).symm
+    · have hall : ∀ j, j < a.chunks.size → a.chunks.getD j 0 = 0 :=
+        fun j hj => hz2 j (Nat.zero_le _) (by omega)
+      rw [a.val_from a.chunks.size hall (Nat.le_refl _)]
+      unfold DigAcc.valFrom
+      simp [show a.chunks.size - z = 0 by omega, radixTree_eq, radixVal]
+  · rename_i hs
+    simp only [hs, ↓reduceIte] at h
+    omega
+
+theorem digitVal_lt {c : Char} (h : isDigit c = true) : digitVal c < 10 := by
+  simp only [isDigit, Bool.and_eq_true, decide_eq_true_eq] at h
+  have : c.toNat ≤ 57 := h.2
+  unfold digitVal; omega
+
+/-- Both accumulators stay well formed. -/
+def St.WF (st : St) : Prop := st.m.WF ∧ st.e.WF
+
+theorem St.wf_step (st : St) (c : Char) (h : st.WF) : (st.step c).WF := by
+  obtain ⟨hm, he⟩ := h
+  unfold St.step St.mant1 St.exp1
+  split
+  all_goals
+    repeat' split
+  all_goals first
+    | exact ⟨hm, he⟩
+    | exact ⟨DigAcc.wf_push _ _ (digitVal_lt (by assumption)) hm, he⟩
+    | exact ⟨hm, DigAcc.wf_push _ _ (digitVal_lt (by assumption)) he⟩
+
+theorem St.wf_foldl (l : List Char) : ∀ (st : St), st.WF → (l.foldl St.step st).WF := by
+  induction l with
+  | nil => intro st h; exact h
+  | cons c l ih => intro st h; exact ih _ (st.wf_step c h)
+
+theorem St.wf_empty : ({} : St).WF := ⟨DigAcc.wf_empty, DigAcc.wf_empty⟩
+
+/-- Whether the scan ended inside a number (`finish` is `some` exactly then). -/
+def St.accepts (st : St) : Bool := st.dig && (st.phase == 2 || st.phase == 3 || st.phase == 6)
+
+theorem St.finish_of_accepts (st : St) :
+    st.finish = if st.accepts then
+      some ⟨st.neg, st.m.val, st.frac, if st.eneg then -(st.e.val : Int) else st.e.val⟩ else none := by
+  unfold St.finish St.accepts
+  by_cases h1 : st.dig = true <;> by_cases h2 : st.phase = 2 <;> by_cases h3 : st.phase = 3 <;>
+    by_cases h4 : st.phase = 6 <;> simp_all
+
 end NumScan
 
 end LeanPydantic
