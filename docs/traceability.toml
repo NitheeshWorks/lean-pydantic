@@ -224,7 +224,7 @@ title = "deriving Model on a structure: fields, defaults, lawfulness, per-model 
 status = "implemented"
 realises = ["LeanPydantic.Derive.mkModelCmds", "LeanPydantic.Derive.mkModelHandler"]
 test = ["tests/Conformance.lean::tableCases"]
-notes = "Structures without parameters or parents, defaults that do not refer to other fields. A `model_config : ConfigDict (extra := ..) (populate_by_name := ..) := {}` member sets the model config. LawfulModel is derived for every model except those with populate_by_name and an alias, or extra='forbid' and an alias: pydantic's own schema disagrees with its validation there (model.extra)."
+notes = "Structures without parameters or parents, defaults that do not refer to other fields. A `model_config : ConfigDict (extra := ..) (populate_by_name := ..) := {}` member sets the model config. LawfulModel is derived for every model except those with populate_by_name and an alias, or extra='forbid' and an alias: pydantic's own schema disagrees with its validation there (model.extra, UP-065)."
 
 [[requirement]]
 id = "model.extra"
@@ -234,7 +234,7 @@ status = "deviation"
 realises = ["LeanPydantic.Extra", "LeanPydantic.ConfigDict", "LeanPydantic.Fields.validate", "LeanPydantic.Fields.forbidExtras", "LeanPydantic.Fields.extraDump", "LeanPydantic.Fields.accepted", "LeanPydantic.Valid.model_extra"]
 theorem = ["LeanPydantic.Model.validate_forbid_iff", "LeanPydantic.Fields.validate_forbid_iff", "LeanPydantic.Fields.validate_forbid_keys_iff", "LeanPydantic.Model.validate_loc_prefix", "LeanPydantic.VerifiedModel.forbidIff"]
 test = ["tests/Conformance.lean::tableCases", "tests/Conformance.lean::dumpCases", "tests/Conformance.lean::schemaCases", "tests/Conformance.lean::handCases"]
-notes = "Accepted keys follow pydantic-core: for Python input the keys the fields read (with populate_by_name the alias if present, else the name), for JSON text every alias and every field name. Deviations: a key repeated in JSON text gives one extra_forbidden (the last value; lean-json keeps the last duplicate), pydantic one per occurrence; under allow an extra named like an aliased field does not mark that field set, so exclude_unset leaves it out (pydantic's model_fields_set holds names). populate_by_name with an alias, and forbid with an alias, have no LawfulModel: the schema pydantic emits rejects input its validator accepts."
+notes = "Accepted keys follow pydantic-core: for Python input the keys the fields read (with populate_by_name the alias if present, else the name), for JSON text every alias and every field name. Deviations: a key repeated in JSON text gives one extra_forbidden (the last value; lean-json keeps the last duplicate), pydantic one per occurrence; under allow an extra named like an aliased field does not mark that field set, so exclude_unset leaves it out (pydantic's model_fields_set holds names). populate_by_name with an alias, and forbid with an alias, have no LawfulModel: the schema pydantic emits rejects input its validator accepts (UP-065)."
 
 [[requirement]]
 id = "api.type-adapter"

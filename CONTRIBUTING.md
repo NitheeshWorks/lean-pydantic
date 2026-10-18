@@ -139,7 +139,7 @@ Listed here with the reason, and in `docs/traceability.toml` with
   `exclude_unset` dump keeps the field.
 * No `LawfulModel` for a model with `populate_by_name` and an alias, or with
   `extra='forbid'` and an alias: pydantic's schema rejects input its
-  validator accepts there (by name, or the name under JSON text).
+  validator accepts there (by name, or the name under JSON text; UP-065).
 * UP-045 (strict `Literal[1, 2]` accepting `True`): matched in lax mode,
   rejected in strict mode, so the strict schema law holds.
 * A constraint given twice must hold both times (pydantic keeps the last);
