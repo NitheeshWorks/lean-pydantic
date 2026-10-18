@@ -1,4 +1,5 @@
-import Keel
+import Keel.Parse
+import Keel.DataTypes.Refine
 import LeanPydantic.RepoImpl.Regex.Nfa
 
 /-!
