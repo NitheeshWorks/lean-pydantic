@@ -218,6 +218,17 @@ theorem schema_sound {obj : Json} {a : α} (h : (model_validate α obj (strict :
 theorem model_dump_conforms (a : α) : Conforms (JsonSchema.schema α) (model_dump a (by_alias := true)) :=
   LawfulJson.schema_sound { strict := true } _ a rfl (LawfulJson.fromJson_toJson _ a)
 
+/-- **`exclude_unset` dumps only what was set** (`exclude_unset_subset`): a
+dump by alias of a value validated from `j`, with `exclude_unset`, writes
+only fields present in `j`, whatever the other options. -/
+theorem exclude_unset_subset (a : α) (j : Json)
+    («include» : Option (List String) := none) (exclude : List String := [])
+    (exclude_defaults exclude_none : Bool := false) :
+    ∃ kvs, model_dump a «include» exclude (by_alias := true) (exclude_unset := true)
+        exclude_defaults exclude_none (set_from := some j) = .obj ⟨kvs⟩ ∧
+      ∀ p ∈ kvs, Fields.wasSet (some j) p.1 = true :=
+  ⟨_, rfl, (inferInstance : LawfulModel α).lawful.unset_subset _ (Model.into a) rfl rfl⟩
+
 end Model
 
 /-! ## `TypeAdapter` -/

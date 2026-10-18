@@ -108,6 +108,7 @@ theorem nil_lawful : Fields.nil.Lawful where
   sound _ _ _ _ _ _ := ⟨by simp [nil, Schema.checkProps], fun _ h => nomatch h⟩
   ne_nil _ _ _ := nofun
   loc_key _ _ _ _ h := nomatch h
+  unset_subset _ _ _ _ _ h := nomatch h
 
 /-- **The field combinator is lawful.** -/
 theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {name : String}
@@ -186,6 +187,18 @@ theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {
         obtain ⟨k, hk, l, hl⟩ := hr.loc_key cfg j kvs es' hw e he
         exact ⟨k, List.mem_cons_of_mem _ hk, l, hl⟩
       · simp at he
+  unset_subset o b hu ha p hp := by
+    obtain ⟨a, b⟩ := b
+    simp only [field] at hp
+    split at hp
+    all_goals
+      split at hp
+      · rename_i hk
+        rcases List.mem_cons.1 hp with rfl | hp
+        · simp only [keep, hu, Bool.and_eq_true, Bool.not_eq_true'] at hk
+          simp_all
+        · exact hr.unset_subset o b hu ha p hp
+      · exact hr.unset_subset o b hu ha p hp
 
 end Fields
 

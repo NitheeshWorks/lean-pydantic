@@ -7,4 +7,5 @@ import LeanPydantic.Proofs.Fields
 import LeanPydantic.Proofs.Containers
 import LeanPydantic.Proofs.Choice
 import LeanPydantic.Proofs.Regex
+import LeanPydantic.Proofs.Complete
 import LeanPydantic.Proofs.Verified

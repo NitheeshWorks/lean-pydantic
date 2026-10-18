@@ -69,5 +69,9 @@ structure Fields.Lawful {β : Type} (F : Fields β) : Prop where
   /-- Every error is located under a field's name. -/
   loc_key : ∀ (cfg : Cfg) (j : Json) (kvs : List (String × Json)) (es : List ErrorDetails),
     F.decode cfg j kvs = .error es → ∀ e ∈ es, ∃ k ∈ F.keys, ∃ l, e.loc = .key k :: l
+  /-- `exclude_unset`: a dump by alias writes only fields that were set in
+  the input it was validated from. -/
+  unset_subset : ∀ (o : DumpOpts) (b : β), o.exclude_unset = true → o.by_alias = true →
+    ∀ p ∈ F.encode o b, wasSet o.set_from p.1 = true
 
 end LeanPydantic

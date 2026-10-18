@@ -1,6 +1,9 @@
 import LeanPydantic.APIs.Model
 import LeanPydantic.Proofs.Error
 import LeanPydantic.Proofs.Regex
+import LeanPydantic.Proofs.Complete
+import LeanPydantic.Proofs.Choice
+import LeanPydantic.Proofs.Containers
 
 /-!
 # The harness: one `Verified<Layer>` structure per layer
@@ -92,6 +95,38 @@ structure VerifiedRegex : Prop where
   stateBound : ∀ (r : Regex.Regex) (T : List Regex.Regex) (p : Option Char) (c : Char),
     r.Reach T → r.Reach (Regex.Regex.next r p c T) ∧ T.length ≤ r.leaves + 1
 
+/-- The m2 surface: containers, choices, `exclude_unset`, completeness. -/
+structure VerifiedSurface : Prop where
+  /-- Lists, dicts and tuples of lawful types are lawful (round trip,
+  strict soundness against the schema, non-empty errors). -/
+  listLawful : ∀ (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α], LawfulJson (List α)
+  dictLawful : ∀ (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α], LawfulJson (Dict α)
+  tupleLawful : ∀ (α β : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] [TupleItems β]
+    [LawfulTupleItems β], LawfulJson (α × β)
+  /-- `Literal[...]` of a lawful type is lawful. -/
+  literalLawful : ∀ (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] [DecidableEq α]
+    (cs : List α), LawfulJson {x : α // (Constraint.oneOf cs).holds x}
+  /-- A derived enumeration is lawful. -/
+  enumLawful : ∀ (α : Type) [Enumeration α] [LawfulEnumeration α], LawfulJson α
+  /-- `union_smart_leftmost`: an exact strict match of the leftmost choice wins. -/
+  unionSmartLeftmost : ∀ (α β : Type) [FromJson α] [ToJson α] [JsonSchema α] [Choices β] (cfg : Cfg)
+    (j : Json) (a : α), fromJson (α := α) cfg.strictly j = .ok a → FromJson.exact α j = true →
+      fromJson (α := α ⊕ β) cfg j = .ok (.inl a)
+  /-- With no exact match, the leftmost strict match wins. -/
+  unionSmartStrict : ∀ (α β : Type) [FromJson α] [ToJson α] [JsonSchema α] [Choices β] (cfg : Cfg)
+    (j : Json) (a : α), Choices.exactly (τ := α ⊕ β) cfg j = none →
+      fromJson (α := α) cfg.strictly j = .ok a → fromJson (α := α ⊕ β) cfg j = .ok (.inl a)
+  /-- `exclude_unset_subset`: an `exclude_unset` dump writes only fields set in the input. -/
+  excludeUnsetSubset : ∀ (α : Type) [Model α] [LawfulModel α] (a : α) (j : Json),
+    ∃ kvs, Model.model_dump a (by_alias := true) (exclude_unset := true) (set_from := some j) = .obj ⟨kvs⟩ ∧
+      ∀ p ∈ kvs, Fields.wasSet (some j) p.1 = true
+  /-- `schema_complete` for scalars: every input their schema allows validates. -/
+  completeBool : ∀ cfg, SchemaComplete Bool cfg
+  completeString : ∀ cfg, SchemaComplete String cfg
+  completeFloat : ∀ cfg : Cfg, cfg.mode = .json → SchemaComplete Float cfg
+  completeOption : ∀ (α : Type) [FromJson α] [JsonSchema α] (cfg : Cfg),
+    SchemaComplete α cfg → SchemaComplete (Option α) cfg
+
 theorem theVerifiedConstraint : VerifiedConstraint where
   validateIff _ c x := Keel.Constraint.validatePy_iff c x
   validateSound _ c _ _ h := Keel.Constraint.validate_sound c h
@@ -116,6 +151,20 @@ theorem theVerifiedModel : VerifiedModel where
   schemaSound _ _ _ _ _ h := Model.schema_sound h
   dumpConforms _ _ _ a := Model.model_dump_conforms a
   locPrefix _ _ _ cfg kvs es h := Model.validate_loc_prefix cfg kvs es h
+
+theorem theVerifiedSurface : VerifiedSurface where
+  listLawful _ _ _ _ _ := inferInstance
+  dictLawful _ _ _ _ _ := inferInstance
+  tupleLawful _ _ _ _ _ _ _ _ := inferInstance
+  literalLawful _ _ _ _ _ _ _ := inferInstance
+  enumLawful _ _ _ := inferInstance
+  unionSmartLeftmost _ _ _ _ _ _ cfg j a h hx := union_smart_leftmost cfg j a h hx
+  unionSmartStrict _ _ _ _ _ _ cfg j a hn h := union_smart_strict cfg j a hn h
+  excludeUnsetSubset _ _ _ a j := Model.exclude_unset_subset a j
+  completeBool := schema_complete_bool
+  completeString := schema_complete_string
+  completeFloat := schema_complete_float
+  completeOption _ _ _ cfg h := schema_complete_option cfg h
 
 theorem theVerifiedRegex : VerifiedRegex where
   deriveCorrect r p c u n := Regex.Regex.derive_correct p c r u n
