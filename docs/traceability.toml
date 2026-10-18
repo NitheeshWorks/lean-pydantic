@@ -315,10 +315,12 @@ id = "dump.exclude-unset"
 upstream = "pydantic/tests/test_main.py::test_exclude_unset_dict"
 title = "model_dump(exclude_unset, exclude_defaults, exclude_none, include, exclude, by_alias)"
 status = "implemented"
-realises = ["LeanPydantic.Fields.keep", "LeanPydantic.Fields.wasSet", "LeanPydantic.Model.model_dump"]
-theorem = ["LeanPydantic.Model.exclude_unset_subset", "LeanPydantic.VerifiedSurface.excludeUnsetSubset"]
-test = ["tests/Conformance.lean::dumpCases"]
-notes = "A Lean value carries no model_fields_set: exclude_unset reads the input it was validated from (set_from)."
+realises = ["LeanPydantic.Fields.keep", "LeanPydantic.Fields.wasSet", "LeanPydantic.Model.model_dump",
+  "LeanPydantic.Valid.model_dump", "LeanPydantic.Valid.model_fields_set", "LeanPydantic.ValidJson.model_dump"]
+theorem = ["LeanPydantic.Model.exclude_unset_subset", "LeanPydantic.Valid.exclude_unset_subset",
+  "LeanPydantic.VerifiedSurface.excludeUnsetSubset"]
+test = ["tests/Conformance.lean::dumpCases", "tests/Conformance.lean::handCases"]
+notes = "A validated model (Valid, ValidJson) remembers its input, so model_dump (exclude_unset := true) and model_fields_set need nothing passed; a bare structure value takes set_from."
 
 [[requirement]]
 id = "functional.validators-serializers"
@@ -384,3 +386,15 @@ realises = ["LeanPydantic.SchemaComplete"]
 theorem = ["LeanPydantic.schema_complete_bool", "LeanPydantic.schema_complete_string", "LeanPydantic.schema_complete_float", "LeanPydantic.schema_complete_int", "LeanPydantic.schema_complete_option"]
 test = ["tests/Conformance.lean::schemaCases"]
 notes = "int is complete on integer literals only: {type: integer} allows 1e30 and, strictly, 1.0, which pydantic rejects."
+
+[[requirement]]
+id = "dos.linear"
+upstream = "pydantic-core/src/input/return_enums.rs (dict and set building), src/input/shared.rs (str_as_int)"
+title = "Hostile sizes: dict and set validation linear, int strings capped before conversion, decimal bounds independent of the exponent"
+status = "implemented"
+realises = ["LeanPydantic.dedupIdx", "LeanPydantic.nodupFast", "LeanPydantic.validateMembersFast",
+  "LeanPydantic.Coerce.strAsInt", "LeanPydantic.Dec.ltCore", "LeanPydantic.Dec.dvdCore"]
+theorem = ["LeanPydantic.dedupIdx_eq", "LeanPydantic.nodupFast_iff", "LeanPydantic.validateMembersFast_eq",
+  "LeanPydantic.Dec.ltCore_iff", "LeanPydantic.Dec.dvdCore_iff", "LeanPydantic.Num.lt_iff_core"]
+test = ["tests/Bench.lean::benches", "tests/Props.lean::properties"]
+notes = "Bounds in tests/Bench.lean against pydantic-core 2.14.1 on the same machine; run by check.sh and CI."

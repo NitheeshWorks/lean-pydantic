@@ -207,7 +207,7 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
       LeanPydantic.Model.model_dump $self $incl $excl $byAlias $exu $exd $exn $setFrom))
   elabCommand (← `(command|
     /-- `model.model_dump_json(indent=None, ...)`. -/
-    def $(mkIdent (`_root_ ++ n ++ `model_dump_json)) ($self : $tyId) ($indent : Option Nat := none)
+    def $(mkIdent (`_root_ ++ n ++ `model_dump_json)) ($self : $tyId) ($indent : LeanPydantic.Indent := {})
         ($incl : Option (List String) := none) ($excl : List String := [])
         ($byAlias : Bool := false) ($exu : Bool := false)
         ($exd : Bool := false) ($exn : Bool := false) ($setFrom : Option LeanJson.Json := none) : String :=

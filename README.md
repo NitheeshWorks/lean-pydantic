@@ -79,15 +79,15 @@ and so is `User.model_json_schema`.
 | nested models | a model-typed field; errors at `["images", 0, "url"]`, schemas under `$defs` |
 | `x: int`, `n: NonNegativeInt`, `s: str`, `b: bool` | `Int`, `Nat`, `String`, `Bool` |
 | `q: str \| None = None` | `q : Option String := none` |
-| `Annotated[float, Field(gt=0)]` | `Decimal ∣ gt 0` |
+| `Annotated[float, Field(gt=0)]` | `Float ∣ gt 0` (`Decimal ∣ gt 0` exactly) |
 | `Annotated[str, Field(max_length=50, min_length=3)]` | `String ∣ maxLength 50 ∧ minLength 3` |
 | `discount: Annotated[NonNegativeInt, Field(le=100)] = 0` | `discount : Nat ∣ le 100 := 0` (checked at compile time) |
 | `Item.model_validate(obj, strict=True)` | `Item.model_validate obj (strict := true)` |
 | `Item.model_validate_json(data)` | `Item.model_validate_json data` |
 | `item.model_dump(exclude_none=True)` | `item.model_dump (exclude_none := true)` |
-| `item.model_dump(by_alias=True, exclude_unset=True)` | `item.model_dump (by_alias := true) (exclude_unset := true) (set_from := some input)` |
+| `item = Item.model_validate(obj)`; `item.model_dump(exclude_unset=True)`, `item.model_fields_set` | `.ok item := Item.model_validate obj`; `item.model_dump (exclude_unset := true)`, `item.model_fields_set` (a validated model remembers its input; `item.val` is the structure) |
 | `Item.model_validate(obj, from_attributes=True)` | `Item.model_validate obj (from_attributes := true)` |
-| `item.model_dump_json(indent=2)` | `item.model_dump_json (indent := some 2)` |
+| `item.model_dump_json(indent=2)` | `item.model_dump_json (indent := 2)` |
 | `Item.model_json_schema()` | `Item.model_json_schema` |
 | `TypeAdapter(int).validate_python('42')` | `(TypeAdapter.new Int).validate_python (json% "42")` |
 | `e.errors(include_url=False)`, `e.json()` | `e.errors (include_url := false)`, `e.json` |

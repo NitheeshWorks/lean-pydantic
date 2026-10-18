@@ -15,7 +15,8 @@ The functions carry pydantic's names:
 | `Item.model_validate(obj, strict=)` | `Item.model_validate obj (strict := …)` |
 | `Item.model_validate_json(data)` | `Item.model_validate_json data` |
 | `item.model_dump(include=, exclude=, exclude_defaults=, exclude_none=)` | `item.model_dump (exclude := …)` |
-| `item.model_dump_json(indent=)` | `item.model_dump_json (indent := some 2)` |
+| `item.model_dump_json(indent=)` | `item.model_dump_json (indent := 2)` |
+| `item.model_fields_set` | `item.model_fields_set` (on a validated `item`) |
 | `Item.model_json_schema()` | `Item.model_json_schema` |
 | `TypeAdapter(int).validate_python(x)` | `(TypeAdapter.new Int).validate_python x` |
 | `ValidationError.errors()`, `.json()` | `ValidationError.errors`, `.json` |
@@ -107,6 +108,34 @@ to its schema in strict mode: `Validated.conforms`.) -/
 structure Validated {α : Type} [FromJson α] (cfg : Cfg) (obj : Json) (a : α) : Prop where
   ref : fromJson cfg obj = .ok a
 
+/-- A value validated from `obj`, with its guarantee. Like a pydantic model
+instance it remembers its input, so its `model_dump (exclude_unset := true)`
+leaves out what `obj` did not set (pydantic's `model_fields_set`). -/
+structure Valid (α : Type) [FromJson α] (cfg : Cfg) (obj : Json) where
+  val : α
+  property : Validated cfg obj val
+
+/-- A value validated from JSON text: the JSON value the text parses to, the
+value validated from it, and the guarantees. -/
+structure ValidJson (α : Type) [FromJson α] (strict : Bool) (data : String) where
+  input : Json
+  parsed : LeanJson.parseDocumentWith {} data.toUTF8 = .ok input
+  val : α
+  property : Validated { strict, mode := .json } input val
+
+/-- The validated value, with the input it came from in its type. -/
+def ValidJson.toValid {α : Type} [FromJson α] {strict : Bool} {data : String} (v : ValidJson α strict data) :
+    Valid α { strict, mode := .json } v.input := ⟨v.val, v.property⟩
+
+/-- `model_dump_json`'s `indent`: `(indent := 2)`, or none (pydantic's
+`indent=None`, the default). -/
+structure Indent where
+  width : Option Nat := none
+
+instance {n : Nat} : OfNat Indent n := ⟨⟨some n⟩⟩
+instance : Coe Nat Indent := ⟨fun n => ⟨some n⟩⟩
+instance : Coe (Option Nat) Indent := ⟨fun w => ⟨w⟩⟩
+
 theorem Validated.conforms {α : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α]
     {cfg : Cfg} {obj : Json} {a : α} (h : Validated cfg obj a) (hs : cfg.strict = true) :
     Conforms (JsonSchema.schema α) obj :=
@@ -120,7 +149,7 @@ def unexplained (obj : Json) (mode : InputMode) : ErrorDetails :=
 /-- Validate under a configuration: the value with its guarantee, or a
 `ValidationError` (never empty). -/
 def validateWith (α : Type) [FromJson α] (cfg : Cfg) (obj : Json) :
-    Except ValidationError {a : α // Validated cfg obj a} :=
+    Except ValidationError (Valid α cfg obj) :=
   match h : fromJson (α := α) cfg obj with
   | .ok a => .ok ⟨a, ⟨h⟩⟩
   | .error es =>
@@ -134,14 +163,12 @@ def jsonInvalid (data : String) (e : LeanJson.JsonError) : ErrorDetails :=
 /-- Parse JSON text and validate it in JSON mode: the value, a JSON value
 the text parses to, and the guarantees for it. -/
 def validateJsonWith (α : Type) [FromJson α] (strict : Bool)
-    (data : String) :
-    Except ValidationError
-      {a : α // ∃ j, LeanJson.parseDocumentWith {} data.toUTF8 = .ok j ∧ Validated { strict, mode := .json } j a} :=
+    (data : String) : Except ValidationError (ValidJson α strict data) :=
   match LeanJson.from_json data with
   | .error e => .error ⟨FromJson.title α, [jsonInvalid data e], by simp⟩
   | .ok ⟨j, hj⟩ =>
     match validateWith α { strict, mode := .json } j with
-    | .ok ⟨a, ha⟩ => .ok ⟨a, j, hj.ref, ha⟩
+    | .ok ⟨a, ha⟩ => .ok ⟨j, hj.ref, a, ha⟩
     | .error e => .error e
 
 /-- The dump of `a` under pydantic's `model_dump` options. -/
@@ -157,7 +184,7 @@ variable (α : Type) [Model α]
 
 /-- `Model.model_validate(obj, strict=None, from_attributes=None)`. -/
 def model_validate (obj : Json) (strict : Bool := false) (from_attributes : Bool := false) :
-    Except ValidationError {a : α // Validated { strict, from_attributes } obj a} :=
+    Except ValidationError (Valid α { strict, from_attributes } obj) :=
   validateWith α { strict, from_attributes } obj
 
 /-- `Model.model_validate_json(data, strict=None)`. -/
@@ -178,12 +205,13 @@ def model_dump (a : α) («include» : Option (List String) := none) (exclude : 
   dumpWith a «include» exclude by_alias exclude_unset exclude_defaults exclude_none set_from
 
 /-- `model.model_dump_json(indent=None, ...)`. -/
-def model_dump_json (a : α) (indent : Option Nat := none) («include» : Option (List String) := none)
+def model_dump_json (a : α) (indent : Indent := {}) («include» : Option (List String) := none)
     (exclude : List String := []) (by_alias : Bool := false) (exclude_unset : Bool := false)
     (exclude_defaults : Bool := false) (exclude_none : Bool := false) (set_from : Option Json := none) :
     String :=
   LeanJson.printStr
-    (dumpWith a «include» exclude by_alias exclude_unset exclude_defaults exclude_none set_from) { indent }
+    (dumpWith a «include» exclude by_alias exclude_unset exclude_defaults exclude_none set_from)
+    { indent := indent.width }
 
 /-! ## What is proved about them -/
 
@@ -231,6 +259,63 @@ theorem exclude_unset_subset (a : α) (j : Json)
 
 end Model
 
+/-! ## Validated models remember their input -/
+
+namespace Valid
+
+variable {α : Type} [m : Model α] {cfg : Cfg} {obj : Json}
+
+/-- `model.model_dump(...)` of a validated model: `exclude_unset` consults
+the input it was validated from. -/
+def model_dump (v : Valid α cfg obj) («include» : Option (List String) := none)
+    (exclude : List String := []) (by_alias : Bool := false) (exclude_unset : Bool := false)
+    (exclude_defaults : Bool := false) (exclude_none : Bool := false) : Json :=
+  Model.model_dump v.val «include» exclude by_alias exclude_unset exclude_defaults exclude_none (some obj)
+
+/-- `model.model_dump_json(indent=None, ...)` of a validated model. -/
+def model_dump_json (v : Valid α cfg obj) (indent : Indent := {}) («include» : Option (List String) := none)
+    (exclude : List String := []) (by_alias : Bool := false) (exclude_unset : Bool := false)
+    (exclude_defaults : Bool := false) (exclude_none : Bool := false) : String :=
+  Model.model_dump_json v.val indent «include» exclude by_alias exclude_unset exclude_defaults exclude_none (some obj)
+
+/-- `model.model_fields_set`: the fields the input set, by their keys
+(aliases where the model gives them), in the model's order. -/
+def model_fields_set (_ : Valid α cfg obj) : List String :=
+  m.fields.keys.filter (Fields.wasSet (some obj))
+
+/-- **`exclude_unset` dumps only what was set**, with no input to pass: a
+validated model's dump by alias writes only fields its input set. -/
+theorem exclude_unset_subset [LawfulModel α] (v : Valid α cfg obj)
+    («include» : Option (List String) := none) (exclude : List String := [])
+    (exclude_defaults exclude_none : Bool := false) :
+    ∃ kvs, v.model_dump «include» exclude (by_alias := true) (exclude_unset := true)
+        exclude_defaults exclude_none = .obj ⟨kvs⟩ ∧
+      ∀ p ∈ kvs, Fields.wasSet (some obj) p.1 = true :=
+  Model.exclude_unset_subset v.val obj «include» exclude exclude_defaults exclude_none
+
+end Valid
+
+namespace ValidJson
+
+variable {α : Type} [Model α] {strict : Bool} {data : String}
+
+/-- `model.model_dump(...)` of a model validated from JSON text. -/
+def model_dump (v : ValidJson α strict data) («include» : Option (List String) := none)
+    (exclude : List String := []) (by_alias : Bool := false) (exclude_unset : Bool := false)
+    (exclude_defaults : Bool := false) (exclude_none : Bool := false) : Json :=
+  v.toValid.model_dump «include» exclude by_alias exclude_unset exclude_defaults exclude_none
+
+/-- `model.model_dump_json(indent=None, ...)` of a model validated from JSON text. -/
+def model_dump_json (v : ValidJson α strict data) (indent : Indent := {})
+    («include» : Option (List String) := none) (exclude : List String := []) (by_alias : Bool := false)
+    (exclude_unset : Bool := false) (exclude_defaults : Bool := false) (exclude_none : Bool := false) : String :=
+  v.toValid.model_dump_json indent «include» exclude by_alias exclude_unset exclude_defaults exclude_none
+
+/-- `model.model_fields_set`. -/
+def model_fields_set (v : ValidJson α strict data) : List String := v.toValid.model_fields_set
+
+end ValidJson
+
 /-! ## `TypeAdapter` -/
 
 /-- pydantic's `TypeAdapter(T)`: validation, serialisation and schema for
@@ -248,7 +333,7 @@ variable {α : Type} [FromJson α] [ToJson α] [JsonSchema α]
 /-- `TypeAdapter.validate_python(obj, strict=None)`. -/
 def validate_python (_ : TypeAdapter α) (obj : Json) (strict : Bool := false)
     (from_attributes : Bool := false) :
-    Except ValidationError {a : α // Validated { strict, from_attributes } obj a} :=
+    Except ValidationError (Valid α { strict, from_attributes } obj) :=
   validateWith α { strict, from_attributes } obj
 
 /-- `TypeAdapter.validate_json(data, strict=None)`. -/

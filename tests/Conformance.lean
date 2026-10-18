@@ -282,10 +282,9 @@ def handCases : List Case := [
     name := "deriving Model inside a namespace"
     run := do
       let t : Shop.Api.Tag := { name := "x" }
-      -- `json%` needs its expected type here: Lean core's `json%` is in scope
-      -- through `Lean.Elab.Term` (via Keel too), so LeanJson's is ambiguous
-      -- without one (lean-fastapi report; a LeanJson syntax-priority fix)
-      let j : LeanJson.Json := json% {"name": "y", "level": "high"}
+      -- unannotated `json%`: LeanJson's takes priority over Lean core's, which
+      -- is in scope here through `Lean.Elab.Term` (the lean-fastapi report)
+      let j := json% {"name": "y", "level": "high"}
       check "{\"name\":\"x\",\"level\":\"low\"}" (t.model_dump_json)
       <&&> check "true" (toString (match Shop.Api.Tag.model_validate j with
         | .ok t => t.val.level == Shop.Api.Level.high | .error _ => false))
@@ -307,7 +306,20 @@ def handCases : List Case := [
     run := do
       let i : Item := { name := "Foo", price := 50.5 }
       check "{\n  \"name\": \"Foo\",\n  \"description\": null,\n  \"price\": 50.5,\n  \"tax\": null\n}"
-        (i.model_dump_json (indent := some 2)) },
+        (i.model_dump_json (indent := 2)) },
+  { upstream := "pydantic/tests/test_main.py::test_fields_set"
+    name := "validated models remember the fields set"
+    run := do
+      match Offer.model_validate (json% {"price": 2.5, "item_id": 3}),
+          Offer.model_validate_json "{\"price\": 2.5, \"q\": null, \"item_id\": 3}" with
+      | .ok o, .ok p =>
+        check "{\"price\":2.5,\"item_id\":3}" (LeanJson.printStr (o.model_dump (exclude_unset := true)))
+        <&&> check "{\"price\":2.5,\"discount\":0,\"q\":null,\"item_id\":3,\"ok\":true}"
+          (LeanJson.printStr o.model_dump)
+        <&&> check "[price, item_id]" (toString o.model_fields_set)
+        <&&> check "{\"price\":2.5,\"q\":null,\"item_id\":3}" (p.model_dump_json (exclude_unset := true))
+        <&&> check "[price, q, item_id]" (toString p.model_fields_set)
+      | _, _ => pure false },
   { upstream := "pydantic/tests/test_main.py::test_ultra_simple_failed"
     name := "errors without url, context, input"
     run := do
