@@ -10,6 +10,10 @@ namespace LeanPydantic
 structure Cfg where
   strict : Bool := false
   mode : InputMode := .python
+  /-- pydantic's `from_attributes`: in Python mode, a model given a
+  non-object reports `model_attributes_type` instead of `model_type`. A Lean
+  value has no attributes to read, so this changes only that error. -/
+  from_attributes : Bool := false
   deriving DecidableEq, Repr, Inhabited
 
 /-- `model_dump` options, named as in pydantic. `«include»` (`include` is a

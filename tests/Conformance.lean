@@ -68,6 +68,18 @@ structure E2 where
   d : Dict Int
   deriving Model
 
+/-! Regression (lean-fastapi report): models derived inside a namespace get
+their methods in that namespace, not under it twice. -/
+namespace Shop.Api
+inductive Level where
+  | low | high
+  deriving Model
+structure Tag where
+  name : String
+  level : Level := .low
+  deriving Model
+end Shop.Api
+
 /-- Validate `input` as pydantic's `TypeAdapter(T)` would, and print what
 pydantic prints. -/
 def runAs (α : Type) [FromJson α] [ToJson α] [JsonSchema α] (mode : String)
@@ -79,7 +91,7 @@ def runAs (α : Type) [FromJson α] [ToJson α] [JsonSchema α] (mode : String)
   else
     match LeanJson.from_json input with
     | .ok j =>
-      match validateWith α { strict } j.val with
+      match validateWith α { strict, from_attributes := mode = "python-attrs" } j.val with
       | .ok a => LeanJson.printStr (toJson {} a.val)
       | .error e => e.json
     | .error _ => "<input is not JSON>"
@@ -175,6 +187,19 @@ def schemaCases : List Case :=
 
 /-- Cases written out by hand, for behaviour the table does not reach. -/
 def handCases : List Case := [
+  { upstream := "pydantic/tests/test_main.py::test_success"
+    name := "deriving Model inside a namespace"
+    run := do
+      let t : Shop.Api.Tag := { name := "x" }
+      -- `json%` needs its expected type here: Lean core's `json%` is in scope
+      -- through `Lean.Elab.Term` (via Keel too), so LeanJson's is ambiguous
+      -- without one (lean-fastapi report; a LeanJson syntax-priority fix)
+      let j : LeanJson.Json := json% {"name": "y", "level": "high"}
+      check "{\"name\":\"x\",\"level\":\"low\"}" (t.model_dump_json)
+      <&&> check "true" (toString (match Shop.Api.Tag.model_validate j with
+        | .ok t => t.val.level == Shop.Api.Level.high | .error _ => false))
+      <&&> check "\"Level\"" (LeanJson.printStr ((Shop.Api.Tag.model_json_schema.getObjVal? "$defs" >>= (·.getObjVal? "Level")
+        >>= (·.getObjVal? "title")).getD .null)) },
   { upstream := "pydantic/tests/test_main.py::test_success"
     name := "model_dump options"
     run := do

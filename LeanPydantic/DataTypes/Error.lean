@@ -37,6 +37,9 @@ inductive ErrorKind where
   | missing
   /-- `model_type`: the input for a model is not an object. -/
   | modelType (className : String)
+  /-- `model_attributes_type`: the input for a model is not an object, when
+  validating with `from_attributes` (Python mode only). -/
+  | modelAttributesType
   /-- `json_invalid`: `model_validate_json` was given text that is not JSON. -/
   | jsonInvalid (error : String)
   | intType

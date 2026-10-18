@@ -155,10 +155,10 @@ namespace Model
 
 variable (α : Type) [Model α]
 
-/-- `Model.model_validate(obj, strict=None)`. -/
-def model_validate (obj : Json) (strict : Bool := false) :
-    Except ValidationError {a : α // Validated { strict } obj a} :=
-  validateWith α { strict } obj
+/-- `Model.model_validate(obj, strict=None, from_attributes=None)`. -/
+def model_validate (obj : Json) (strict : Bool := false) (from_attributes : Bool := false) :
+    Except ValidationError {a : α // Validated { strict, from_attributes } obj a} :=
+  validateWith α { strict, from_attributes } obj
 
 /-- `Model.model_validate_json(data, strict=None)`. -/
 def model_validate_json (data : String) (strict : Bool := false) :=
@@ -235,9 +235,10 @@ namespace TypeAdapter
 variable {α : Type} [FromJson α] [ToJson α] [JsonSchema α]
 
 /-- `TypeAdapter.validate_python(obj, strict=None)`. -/
-def validate_python (_ : TypeAdapter α) (obj : Json) (strict : Bool := false) :
-    Except ValidationError {a : α // Validated { strict } obj a} :=
-  validateWith α { strict } obj
+def validate_python (_ : TypeAdapter α) (obj : Json) (strict : Bool := false)
+    (from_attributes : Bool := false) :
+    Except ValidationError {a : α // Validated { strict, from_attributes } obj a} :=
+  validateWith α { strict, from_attributes } obj
 
 /-- `TypeAdapter.validate_json(data, strict=None)`. -/
 def validate_json (_ : TypeAdapter α) (data : String) (strict : Bool := false) := validateJsonWith α strict data

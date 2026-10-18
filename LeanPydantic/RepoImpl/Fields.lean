@@ -116,7 +116,9 @@ def validate (title : String) (F : Fields β) (back : β → α) (cfg : Cfg) (j 
     Except (List ErrorDetails) α :=
   match j with
   | .obj ⟨kvs⟩ => (F.decode cfg j kvs).map back
-  | _ => .error [{ kind := .modelType title, input := j, mode := cfg.mode }]
+  | _ =>
+    let kind := if cfg.from_attributes && cfg.mode = .python then .modelAttributesType else .modelType title
+    .error [{ kind, input := j, mode := cfg.mode }]
 
 /-- The model serialiser. -/
 def dump (F : Fields β) (into : α → β) (opts : DumpOpts) (a : α) : Json :=

@@ -217,6 +217,8 @@ def run(tag, mode, strict, text):
     try:
         if mode == 'json':
             r = ta.validate_json(text, strict=strict)
+        elif mode == 'python-attrs':
+            r = ta.validate_python(json.loads(text), strict=strict, from_attributes=True)
         else:
             r = ta.validate_python(json.loads(text), strict=strict)
         return ta.dump_json(r).decode()
@@ -247,6 +249,15 @@ for tag, inputs, ref in STRICT_ROWS:
     for text in inputs:
         for mode in ('python', 'json'):
             rows.append((ref, tag, mode, True, text, run(tag, mode, True, text)))
+# validate_python(from_attributes=True), as FastAPI calls it: model_attributes_type
+ATTRS_ROWS = [('shop', ['5', '"x"', 'null', '[1]', '{"name":"x","images":[3],"itemId":1,"sizes":[1]}',
+                        '{"name":"x","images":[],"itemId":1,"sizes":[1],"image":7}',
+                        '{"name":"x","images":[{"url":1}],"itemId":1,"sizes":[1]}'],
+               'pydantic/tests/test_main.py::test_validate_python_from_attributes')]
+for tag, inputs, ref in ATTRS_ROWS:
+    for text in inputs:
+        for strict in (False, True):
+            rows.append((ref, tag, 'python-attrs', strict, text, run(tag, 'python-attrs', strict, text)))
 for tag, inputs, ref in JSON_ONLY:
     for text in inputs:
         rows.append((ref, tag, 'json', False, text, run(tag, 'json', False, text)))

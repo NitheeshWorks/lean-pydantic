@@ -23,6 +23,7 @@ namespace ErrorKind
 def type : ErrorKind → String
   | .missing => "missing"
   | .modelType _ => "model_type"
+  | .modelAttributesType => "model_attributes_type"
   | .jsonInvalid _ => "json_invalid"
   | .intType => "int_type"
   | .intParsing => "int_parsing"
@@ -61,6 +62,7 @@ def type : ErrorKind → String
 /-- The pydantic error `ctx`, as JSON members (empty: no `ctx`). -/
 def ctx : ErrorKind → List (String × Json)
   | .modelType c => [("class_name", .str c)]
+  | .modelAttributesType => []
   | .jsonInvalid e => [("error", .str e)]
   | .greaterThan n => [("gt", .num n)]
   | .greaterThanEqual n => [("ge", .num n)]
@@ -96,6 +98,7 @@ def message (mode : InputMode) : ErrorKind → String
   | .modelType c => match mode with
     | .python => "Input should be a valid dictionary or instance of " ++ c
     | .json => "Input should be an object"
+  | .modelAttributesType => "Input should be a valid dictionary or object to extract fields from"
   | .jsonInvalid e => "Invalid JSON: " ++ e
   | .intType => "Input should be a valid integer"
   | .intParsing => "Input should be a valid integer, unable to parse string as an integer"
@@ -164,6 +167,7 @@ def template (mode : InputMode) (type : String) : List Piece :=
   | "model_type" => match mode with
     | .python => [.lit "Input should be a valid dictionary or instance of ", .var "class_name"]
     | .json => [.lit "Input should be an object"]
+  | "model_attributes_type" => [.lit "Input should be a valid dictionary or object to extract fields from"]
   | "json_invalid" => [.lit "Invalid JSON: ", .var "error"]
   | "int_type" => [.lit "Input should be a valid integer"]
   | "int_parsing" => [.lit "Input should be a valid integer, unable to parse string as an integer"]
