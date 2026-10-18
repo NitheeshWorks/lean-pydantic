@@ -50,9 +50,27 @@ structure Shop where
   stock : Dict Int := {}
   deriving Model
 
+inductive Color where
+  | red
+  | green
+  deriving Model
+
+structure Im where
+  url : String
+  deriving Model
+
+structure E2 where
+  c : Color
+  l : String ∣ oneOf ["a", "b"] := "a"
+  one : String ∣ oneOf ["x"]
+  u : Int ⊕ String
+  t : Int × String
+  d : Dict Int
+  deriving Model
+
 /-- Validate `input` as pydantic's `TypeAdapter(T)` would, and print what
 pydantic prints. -/
-def runAs (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (mode : String)
+def runAs (α : Type) [FromJson α] [ToJson α] [JsonSchema α] (mode : String)
     (strict : Bool) (input : String) : String :=
   if mode = "json" then
     match validateJsonWith α strict input with
@@ -68,7 +86,7 @@ def runAs (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] 
 
 /-- A type tag's validator and schema. -/
 def dispatch (tag : String) : Option ((String → Bool → String → String) × Json) :=
-  let r (α : Type) [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] :=
+  let r (α : Type) [FromJson α] [ToJson α] [JsonSchema α] :=
     some (runAs α, (JsonSchema.schema α).document)
   match tag with
   | "int" => r Int
@@ -93,6 +111,19 @@ def dispatch (tag : String) : Option ((String → Bool → String → String) ×
   | "list_item" => r (List Item)
   | "image" => r Image
   | "shop" => r Shop
+  | "color" => r Color
+  | "e2" => r E2
+  | "literal_ab" => r (String ∣ oneOf ["a", "b"])
+  | "literal_quote" => r (String ∣ oneOf ["b'c", "d\"e", "x"])
+  | "literal_int" => r (Int ∣ oneOf [1, 2])
+  | "union_int_str" => r (Int ⊕ String)
+  | "union_str_int" => r (String ⊕ Int)
+  | "union_float_int" => r (Decimal ⊕ Int)
+  | "union_int_float" => r (Int ⊕ Decimal)
+  | "union_mixed" => r ((Int ∣ gt 0) ⊕ List Int ⊕ Im ⊕ String)
+  | "opt_union" => r (Option (Int ⊕ String))
+  | "tuple_isb" => r (Int × String × Bool)
+  | "tuple_is" => r (Int × String)
   | _ => none
 
 /-- Validate `input`, then `model_dump_json` it with the given options and

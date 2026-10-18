@@ -5,4 +5,5 @@ import LeanPydantic.Proofs.Scalars
 import LeanPydantic.Proofs.Wrappers
 import LeanPydantic.Proofs.Fields
 import LeanPydantic.Proofs.Containers
+import LeanPydantic.Proofs.Choice
 import LeanPydantic.Proofs.Verified

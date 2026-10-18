@@ -84,11 +84,16 @@ def str : Json → Except ErrorKind String
 
 end Scalar
 
-instance : FromJson Int := ⟨"int", fun cfg j => liftKind cfg j (Scalar.int cfg.strict j)⟩
-instance : FromJson Nat := ⟨"int", fun cfg j => liftKind cfg j (Scalar.nat cfg.strict j)⟩
-instance : FromJson Decimal := ⟨"float", fun cfg j => liftKind cfg j (Scalar.float cfg.strict j)⟩
-instance : FromJson Bool := ⟨"bool", fun cfg j => liftKind cfg j (Scalar.bool cfg.strict j)⟩
-instance : FromJson String := ⟨"str", fun cfg j => liftKind cfg j (Scalar.str j)⟩
+instance : FromJson Int := ⟨"int", fun cfg j => liftKind cfg j (Scalar.int cfg.strict j), fun _ => true⟩
+instance : FromJson Nat := ⟨"constrained-int", fun cfg j => liftKind cfg j (Scalar.nat cfg.strict j), fun _ => true⟩
+instance : FromJson Decimal where
+  title := "float"
+  fromJson cfg j := liftKind cfg j (Scalar.float cfg.strict j)
+  exact
+    | .num (.float _) => true
+    | _ => false
+instance : FromJson Bool := ⟨"bool", fun cfg j => liftKind cfg j (Scalar.bool cfg.strict j), fun _ => true⟩
+instance : FromJson String := ⟨"str", fun cfg j => liftKind cfg j (Scalar.str j), fun _ => true⟩
 
 instance : ToJson Int := ⟨fun _ i => .num (.int i)⟩
 instance : ToJson Nat := ⟨fun _ n => .num (.int n)⟩
@@ -106,6 +111,9 @@ instance : JsonSchema String := ⟨.string []⟩
 
 instance fromJsonOption {α : Type} [FromJson α] : FromJson (Option α) where
   title := "nullable[" ++ FromJson.title α ++ "]"
+  exact
+    | .null => true
+    | j => FromJson.exact α j
   fromJson cfg
     | .null => .ok none
     | j => (fromJson cfg j).map some
@@ -115,13 +123,21 @@ instance toJsonOption {α : Type} [ToJson α] : ToJson (Option α) where
     | some a => toJson o a
     | none => .null
 
-instance {α : Type} [JsonSchema α] : JsonSchema (Option α) := ⟨.anyOf [JsonSchema.schema α, .null]⟩
+/-- `T | None`: `null` appended to `T`'s alternatives, or `anyOf [T, null]`
+(pydantic flattens a nullable union into one `anyOf`). -/
+def Schema.nullable : Schema → Schema
+  | .anyOf alts => .anyOf (alts ++ [.null])
+  | s => .anyOf [s, .null]
+
+instance {α : Type} [JsonSchema α] : JsonSchema (Option α) := ⟨(JsonSchema.schema α).nullable⟩
 
 /-! ## `α ∣ c`: the base validator, then the constraint -/
 
 instance fromJsonRefined {α : Type} [FromJson α] [Constrained α] (c : Constraint α) :
     FromJson {x : α // c.holds x} where
-  title := FromJson.title α
+  title := if (FromJson.title α).startsWith "constrained-" then FromJson.title α
+    else "constrained-" ++ FromJson.title α
+  exact := FromJson.exact α
   fromJson cfg j :=
     match fromJson cfg j with
     | .error es => .error es

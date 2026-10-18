@@ -14,7 +14,8 @@ input `json.loads` would change (huge or over-precise floats) are not
 generated.
 """
 import json, sys
-from typing import Annotated, Optional
+from enum import Enum
+from typing import Annotated, Literal, Optional, Union
 from pydantic import BaseModel, Field, FiniteFloat, NonNegativeInt, TypeAdapter, ValidationError
 
 class Item(BaseModel):
@@ -43,6 +44,21 @@ class Shop(BaseModel):
     sizes: Annotated[list[int], Field(min_length=1, max_length=2)]
     stock: dict[str, int] = {}
 
+class Color(str, Enum):
+    red = 'red'
+    green = 'green'
+
+class Im(BaseModel):
+    url: str
+
+class E2(BaseModel):
+    c: Color
+    l: Literal['a', 'b'] = 'a'
+    one: Literal['x']
+    u: Union[int, str]
+    t: tuple[int, str]
+    d: dict[str, int]
+
 TYPES = {
     'int': int,
     'nat': NonNegativeInt,
@@ -66,6 +82,19 @@ TYPES = {
     'list_item': list[Item],
     'image': Image,
     'shop': Shop,
+    'color': Color,
+    'e2': E2,
+    'literal_ab': Literal['a', 'b'],
+    'literal_quote': Literal["b'c", 'd"e', 'x'],
+    'literal_int': Literal[1, 2],
+    'union_int_str': Union[int, str],
+    'union_str_int': Union[str, int],
+    'union_float_int': Union[FiniteFloat, int],
+    'union_int_float': Union[int, FiniteFloat],
+    'union_mixed': Union[Annotated[int, Field(gt=0)], list[int], Im, str],
+    'opt_union': Optional[Union[int, str]],
+    'tuple_isb': tuple[int, str, bool],
+    'tuple_is': tuple[int, str],
 }
 
 PC = 'pydantic-core/tests/validators/'
@@ -140,6 +169,27 @@ ROWS = [
     ('image', IMAGE_IN, 'pydantic/tests/test_main.py::test_nested_model'),
     ('shop', SHOP_IN, 'pydantic/tests/test_aliases.py::test_alias_error'),
 ]
+CHOICE_IN = ['"5"', '5', '5.0', '5.5', '[]', 'true', 'null', '{"url": 1}', '-5', '[1, "x"]', '{"url": "u"}', '"z"', '"a"', '1', '3']
+TUPLE_IN = ['[1, "a"]', '[1, "a", true]', '[1,"a",true,4]', '["x", 2, "q"]', '{}', '[]', '[1]', '"ab"']
+COLOR_IN = ['"red"', '"green"', '"blue"', '1', 'null', '"Red"']
+E2_IN = ['{"c":"blue","l":"c","one":"y","u":[],"t":[1],"d":{"a":"x"}}', '{"c":"red","one":"x","u":"5","t":[1,"a",3],"d":[]}',
+    '{"c":"green","one":"x","u":5,"t":[1,"a"],"d":{"k":1},"l":"b"}', '{"c":"red","one":"x","u":true,"t":["1","a"],"d":{}}']
+ROWS += [
+    ('color', COLOR_IN, PC + 'test_enums.py::test_plain_enum'),
+    ('e2', E2_IN, 'pydantic/tests/test_main.py::test_enum_values'),
+    ('literal_ab', CHOICE_IN, PC + 'test_literal.py::test_literal_py_and_json'),
+    ('literal_quote', ['"b\'c"', '"q"', '1'], PC + 'test_literal.py::test_literal_py_and_json'),
+    ('literal_int', CHOICE_IN, PC + 'test_literal.py::test_literal_py_and_json'),
+    ('union_int_str', CHOICE_IN, PC + 'test_union.py::test_union_bool_int'),
+    ('union_str_int', CHOICE_IN, PC + 'test_union.py::test_union_bool_int'),
+    ('union_float_int', CHOICE_IN, PC + 'test_union.py::test_int_float'),
+    ('union_int_float', CHOICE_IN, PC + 'test_union.py::test_int_float'),
+    ('union_mixed', CHOICE_IN, PC + 'test_union.py::test_model_a'),
+    ('opt_union', CHOICE_IN, PC + 'test_nullable.py::test_union_nullable_bool_int'),
+    ('tuple_isb', TUPLE_IN, PC + 'test_tuple.py::test_tuple_json'),
+    ('tuple_is', TUPLE_IN, PC + 'test_tuple.py::test_tuple_json'),
+]
+
 STRICT_ROWS = [
     ('int', ['1', '"1"', '1.0', 'true', 'null'], PC + 'test_int.py::test_int_strict'),
     ('float', ['1', '1.5', '"1.5"', 'true'], PC + 'test_float.py::test_float_strict'),

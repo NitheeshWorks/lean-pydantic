@@ -6,3 +6,4 @@ import LeanPydantic.RepoImpl.Constraint
 import LeanPydantic.RepoImpl.Scalars
 import LeanPydantic.RepoImpl.Fields
 import LeanPydantic.RepoImpl.Containers
+import LeanPydantic.RepoImpl.Choice

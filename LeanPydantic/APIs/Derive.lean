@@ -59,11 +59,39 @@ def projAt {m : Type → Type} [Monad m] [MonadQuotation m] (p : Term) : Nat →
   | 0 => `(Prod.fst $p)
   | i + 1 => do projAt (← `(Prod.snd $p)) i
 
+/-- `deriving Model` on an inductive type whose constructors take no
+arguments: an enumeration whose values are the constructor names
+(pydantic's `class Color(str, Enum)`), with its laws by `decide`. -/
+def mkEnumCmds (declName : Name) (indVal : InductiveVal) : CommandElabM Unit := do
+  let tyId := mkIdent declName
+  let title := Syntax.mkStrLit (declName.componentsRev.head!.toString)
+  let ctors := indVal.ctors.toArray.map mkIdent
+  let alts ← indVal.ctors.toArray.mapM fun c =>
+    `(Lean.Parser.Term.matchAltExpr| | $(mkIdent c) => $(Syntax.mkStrLit c.componentsRev.head!.toString))
+  elabCommand (← `(command| deriving instance DecidableEq for $tyId))
+  elabCommand (← `(command|
+    instance : LeanPydantic.Enumeration $tyId where
+      title := $title
+      members := [$ctors,*]
+      value := fun $alts:matchAlt*))
+  elabCommand (← `(command|
+    instance : LeanPydantic.LawfulEnumeration $tyId :=
+      ⟨by intro a; cases a <;> decide, by decide⟩))
+
 /-- The commands `deriving Model` emits for `declName`. -/
 def mkModelCmds (declName : Name) : CommandElabM Unit := do
   let env ← getEnv
+  if let some (.inductInfo indVal) := env.find? declName then
+    if !isStructure env declName then
+      let mut nullary := indVal.numParams = 0 && indVal.numIndices = 0
+      for c in indVal.ctors do
+        if let some (.ctorInfo cv) := env.find? c then
+          if cv.numFields ≠ 0 then nullary := false
+      if nullary then
+        mkEnumCmds declName indVal
+        return
   unless isStructure env declName do
-    throwError "deriving Model: `{declName}` is not a structure"
+    throwError "deriving Model: `{declName}` is not a structure or an enumeration"
   let indVal ← getConstInfoInduct declName
   unless indVal.numParams = 0 do
     throwError "deriving Model: `{declName}` has parameters, which are not supported yet"
@@ -115,12 +143,12 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
       back := fun $p => $ctor $parts*
       back_into := fun _ => rfl))
   -- the laws, when every field type has them (a `Float` field has none)
-  let lawful ← try
-      elabCommand (← `(command|
-        instance : LeanPydantic.LawfulModel $tyId := ⟨$lawStx⟩))
-      pure true
-    catch _ => pure false
+  let lawful ← liftTermElabM <| fieldTypes.allM fun fty => do
+    let inst ← mkAppM ``LeanPydantic.LawfulJson #[fty]
+    return (← trySynthInstance inst) matches .some _
   if lawful then
+    elabCommand (← `(command|
+      instance : LeanPydantic.LawfulModel $tyId := ⟨$lawStx⟩))
     elabCommand (← `(command|
       /-- Validating a dump by alias gives the model back (an instance of `LawfulJson`). -/
       theorem $(mkIdent (n ++ `fromJson_toJson)) (cfg : LeanPydantic.Cfg) (a : $tyId) :

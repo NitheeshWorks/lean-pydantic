@@ -26,16 +26,43 @@ theorem fromJson_option_of_ne_null [FromJson α] (cfg : Cfg) {j : Json} (h : j �
     fromJson (α := Option α) cfg j = (fromJson cfg j).map some := by
   cases j <;> first | exact absurd rfl h | rfl
 
-/-- The schema of `α | None` is `anyOf [α, null]`. -/
+/-- The schema of `α | None`: `α`'s with `null` as one more alternative. -/
 theorem schema_option [JsonSchema α] :
-    JsonSchema.schema (Option α) = .anyOf [JsonSchema.schema α, .null] := rfl
+    JsonSchema.schema (Option α) = (JsonSchema.schema α).nullable := rfl
+
+theorem checkAny_iff : ∀ (alts : List Schema) (j : Json),
+    Schema.checkAny alts j = true ↔ ∃ s ∈ alts, s.check j = true
+  | [], _ => by simp [Schema.checkAny]
+  | s :: ss, j => by simp [Schema.checkAny, checkAny_iff ss j]
+
+theorem check_null (j : Json) : Schema.null.check j = true ↔ j = .null := by
+  cases j <;> simp [Schema.check, LeanJson.Json.isNull]
 
 /-- **Nullable schemas**: a value conforms to `α | None`'s schema exactly
 when it is `null` or conforms to `α`'s. -/
 theorem nullable_anyOf [JsonSchema α] (j : Json) :
     Conforms (JsonSchema.schema (Option α)) j ↔ j = .null ∨ Conforms (JsonSchema.schema α) j := by
-  simp only [Conforms, schema_option, Schema.check, Schema.checkAny, Bool.or_false, Bool.or_eq_true]
-  cases j <;> simp [LeanJson.Json.isNull, or_comm]
+  rw [schema_option]
+  unfold Conforms Schema.nullable
+  split
+  · rename_i alts h
+    rw [h]
+    simp only [Schema.check, checkAny_iff, List.mem_append, List.mem_singleton]
+    constructor
+    · rintro ⟨s, hs | rfl, hc⟩
+      · exact .inr ⟨s, hs, hc⟩
+      · exact .inl ((check_null j).1 hc)
+    · rintro (rfl | ⟨s, hs, hc⟩)
+      · exact ⟨.null, .inr rfl, (check_null _).2 rfl⟩
+      · exact ⟨s, .inl hs, hc⟩
+  · simp only [Schema.check, checkAny_iff, List.mem_cons, List.not_mem_nil, or_false]
+    constructor
+    · rintro ⟨s, rfl | rfl, hc⟩
+      · exact .inr hc
+      · exact .inl ((check_null j).1 hc)
+    · rintro (rfl | hc)
+      · exact ⟨.null, .inr rfl, (check_null _).2 rfl⟩
+      · exact ⟨_, .inl rfl, hc⟩
 
 instance [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] [NonNull α] :
     LawfulJson (Option α) where

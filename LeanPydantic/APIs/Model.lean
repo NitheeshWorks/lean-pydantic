@@ -1,4 +1,4 @@
-import LeanPydantic.Proofs.Containers
+import LeanPydantic.Proofs.Choice
 
 /-!
 # APIs: models, `TypeAdapter`, and pydantic's method names
@@ -49,7 +49,7 @@ namespace Model
 
 variable {α : Type}
 
-instance (priority := low) [m : Model α] : FromJson α := ⟨m.title, Fields.validate m.title m.fields m.back⟩
+instance (priority := low) [m : Model α] : FromJson α := ⟨m.title, Fields.validate m.title m.fields m.back, fun _ => true⟩
 instance (priority := low) [m : Model α] : ToJson α := ⟨Fields.dump m.fields m.into⟩
 instance (priority := low) [m : Model α] : JsonSchema α := ⟨Fields.schema m.title m.fields⟩
 

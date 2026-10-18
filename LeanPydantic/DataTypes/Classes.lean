@@ -23,6 +23,10 @@ is titled (pydantic: the model name, or `int`, `str`, ...). -/
 class FromJson (α : Type) where
   title : String
   fromJson : Cfg → Json → Except (List ErrorDetails) α
+  /-- Whether a strict success on this input is an *exact* match (pydantic-core's
+  `Exactness::Exact`): a `float` from an integer is strict but not exact. Smart
+  unions prefer exact matches. -/
+  exact : Json → Bool := fun _ => true
 
 /-- Serialisation to JSON. -/
 class ToJson (α : Type) where
