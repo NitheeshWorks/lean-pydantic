@@ -24,3 +24,211 @@ upstream_license = "MIT"
 # realises = ["LeanPydantic.Foo.bar"]
 # theorem = ["LeanPydantic.Foo.bar_spec"]
 # test = ["tests/Conformance.lean::name"]
+
+# ---------------------------------------------------------------- scalars
+
+[[requirement]]
+id = "validate.int"
+upstream = "pydantic-core/tests/validators/test_int.py::test_int_py_and_json"
+title = "int: JSON integers; lax floats, bools and strings (clean_int_str); strict JSON integers only"
+status = "tested"
+realises = ["LeanPydantic.Scalar.int", "LeanPydantic.Coerce.strAsInt", "LeanPydantic.Coerce.cleanIntStr", "LeanPydantic.Coerce.decimalAsInt"]
+theorem = ["LeanPydantic.int_strict"]
+test = ["tests/Conformance.lean::tableCases", "tests/Props.lean::properties", "tests/pbt/Pbt.lean"]
+notes = "Coercions are a rule-for-rule port of pydantic-core shared.rs, checked byte for byte against pydantic on 160 inputs; there is no independent spec to prove them against."
+
+[[requirement]]
+id = "validate.non-negative-int"
+upstream = "pydantic/tests/test_types.py::test_strict_raw_type"
+title = "Nat is NonNegativeInt: int, then ge=0 (greater_than_equal, ctx ge 0); schema minimum 0"
+status = "implemented"
+realises = ["LeanPydantic.Scalar.nat"]
+theorem = ["LeanPydantic.nat_strict"]
+test = ["tests/Conformance.lean::tableCases"]
+
+[[requirement]]
+id = "validate.finite-float"
+upstream = "pydantic-core/tests/validators/test_float.py::test_non_finite_json_values"
+title = "Decimal is FiniteFloat (float, allow_inf_nan=False), held exactly"
+status = "deviation"
+realises = ["LeanPydantic.Scalar.float", "LeanPydantic.Coerce.strAsFloat"]
+theorem = ["LeanPydantic.float_strict"]
+test = ["tests/Conformance.lean::tableCases", "tests/Props.lean::properties"]
+notes = "Deviation: values are exact decimals, not IEEE doubles, so 0.1 + 0.2 and over-precise or overflowing literals (1e400) keep their exact value where pydantic rounds or gives inf. NaN and infinities (lenient JSON, 'inf' strings) are finite_number, as FiniteFloat. Plain float (allow_inf_nan=True) is not provided yet."
+
+[[requirement]]
+id = "validate.bool"
+upstream = "pydantic-core/tests/validators/test_bool.py::test_bool"
+title = "bool: str_as_bool words, 0/1 integers, 0.0/1.0 floats; strict bools only"
+status = "tested"
+realises = ["LeanPydantic.Scalar.bool", "LeanPydantic.Coerce.strAsBool"]
+theorem = ["LeanPydantic.bool_strict"]
+test = ["tests/Conformance.lean::tableCases"]
+
+[[requirement]]
+id = "validate.str"
+upstream = "pydantic-core/tests/validators/test_string.py::test_str"
+title = "str: JSON strings only (no number coercion)"
+status = "implemented"
+realises = ["LeanPydantic.Scalar.str"]
+theorem = ["LeanPydantic.str_strict"]
+test = ["tests/Conformance.lean::tableCases"]
+
+[[requirement]]
+id = "validate.nullable"
+upstream = "pydantic-core/tests/validators/test_nullable.py::test_nullable"
+title = "Optional[T]: null is None, anything else is T; schema anyOf [T, null]"
+status = "implemented"
+realises = ["LeanPydantic.fromJsonOption", "LeanPydantic.toJsonOption"]
+theorem = ["LeanPydantic.nullable_anyOf", "LeanPydantic.schema_option", "LeanPydantic.fromJson_option_of_ne_null"]
+test = ["tests/Conformance.lean::tableCases", "tests/pbt/Pbt.lean"]
+
+# ------------------------------------------------------------ constraints
+
+[[requirement]]
+id = "constraints.refinement"
+upstream = "pydantic/tests/test_types.py::test_constraints_arbitrary_type"
+title = "Annotated[T, Field(gt, ge, lt, le, multiple_of, min_length, max_length)] is the refinement T | c over Keel's constraint language"
+status = "implemented"
+realises = ["LeanPydantic.fromJsonRefined", "Keel.Constraint.validatePy"]
+theorem = ["LeanPydantic.fromJson_refined_iff", "LeanPydantic.fromJson_refined_error"]
+test = ["tests/Conformance.lean::tableCases", "tests/pbt/Pbt.lean"]
+
+[[requirement]]
+id = "constraints.order"
+upstream = "pydantic-core/tests/validators/test_int.py::test_int_kwargs"
+title = "Constraints are checked in pydantic-core's order (multiple_of, le, lt, ge, gt; min_length, max_length) and the first failure is reported"
+status = "implemented"
+realises = ["Keel.Constraint.validatePy", "Keel.Constraint.rank", "Keel.Constraint.ordered"]
+theorem = ["Keel.Constraint.validatePy_iff", "Keel.Constraint.validate_sound", "Keel.Constraint.validate_complete", "Keel.Constraint.validate_errors_nonempty"]
+test = ["tests/Conformance.lean::tableCases", "tests/Props.lean::properties"]
+
+[[requirement]]
+id = "constraints.duplicate-atoms"
+upstream = "pydantic/tests/test_types.py::test_constraints_arbitrary_type"
+title = "A constraint given twice (ge 0 and ge 5) must hold both times; pydantic keeps only the last"
+status = "deviation"
+realises = ["Keel.Constraint.validatePy"]
+notes = "The schema keeps pydantic's last-wins keyword (lastWins), which is weaker than the conjunction, so schema soundness is unaffected. Nat | ge 5 on input -1 reports ge 0 (the Nat base) where pydantic reports ge 5."
+
+[[requirement]]
+id = "constraints.keywords"
+upstream = "pydantic/tests/test_json_schema.py::test_constraints_schema_validation"
+title = "Each constraint's JSON Schema keywords (exclusiveMinimum, minimum, exclusiveMaximum, maximum, multipleOf, minLength, maxLength) hold on what strict validation accepts"
+status = "implemented"
+realises = ["Keel.Constraint.keywordsOf", "LeanPydantic.Constrained"]
+theorem = ["Keel.Constraint.keywordsOf_sound", "LeanPydantic.numeric_keywords_sound", "LeanPydantic.check_withKeywords"]
+test = ["tests/Conformance.lean::schemaCases"]
+notes = "Holds for atoms built with the carrier's own instances (class Canonical, found automatically): Keel stores the order or length instance inside each atom."
+
+[[requirement]]
+id = "constraints.exact-numbers"
+upstream = "pydantic-core/tests/validators/test_float.py::test_float_multiple_of"
+title = "Numeric bounds and multiple_of compare exact values (float multiple_of has no tolerance)"
+status = "deviation"
+realises = ["LeanPydantic.Dec.rel", "LeanPydantic.Num.rel"]
+theorem = ["LeanPydantic.Num.rel_at", "LeanPydantic.Num.rel_denotes", "LeanPydantic.Num.rel_int"]
+test = ["tests/Conformance.lean::tableCases"]
+notes = "pydantic-core's float multiple_of allows a relative tolerance of 1e-9; exact decimals need none. Bounds written as integral floats (gt=2.0) print as 2 in schemas and messages, as pydantic does for gt=2."
+
+# ----------------------------------------------------------------- errors
+
+[[requirement]]
+id = "errors.vocabulary"
+upstream = "pydantic/tests/test_errors.py"
+title = "Error type, ctx and msg: pydantic-core's message templates (python and json input), rendered from ctx with Rust Display numbers"
+status = "implemented"
+realises = ["LeanPydantic.ErrorKind.type", "LeanPydantic.ErrorKind.ctx", "LeanPydantic.ErrorKind.message", "LeanPydantic.template", "LeanPydantic.render"]
+theorem = ["LeanPydantic.error_type_ctx_coherent"]
+test = ["tests/Conformance.lean::tableCases"]
+
+[[requirement]]
+id = "errors.json"
+upstream = "pydantic/tests/test_main.py::test_ultra_simple_failed"
+title = "ValidationError.errors(include_url, include_context, include_input) and .json(): member order type, loc, msg, input, ctx, url"
+status = "tested"
+realises = ["LeanPydantic.ValidationError.errors", "LeanPydantic.ValidationError.json", "LeanPydantic.ErrorDetails.toJson"]
+test = ["tests/Conformance.lean::tableCases", "tests/Conformance.lean::handCases"]
+
+[[requirement]]
+id = "errors.json-non-finite-input"
+upstream = "pydantic-core/tests/validators/test_float.py::test_non_finite_json_values"
+title = "A NaN or infinite input is printed as NaN / Infinity in ValidationError.json() (UP-034)"
+status = "deviation"
+realises = ["LeanPydantic.ValidationError.json"]
+test = ["tests/Conformance.lean::tableCases"]
+notes = "Matches upstream byte for byte, although the output is not RFC 8259 JSON; recorded as UP-034."
+
+[[requirement]]
+id = "errors.int-minus-after-zeros"
+upstream = "pydantic-core/tests/validators/test_int.py::test_int_py_and_json"
+title = "'0-5' validates as -5 (UP-032)"
+status = "deviation"
+realises = ["LeanPydantic.Coerce.stripLeadingZeros"]
+test = ["tests/Conformance.lean::tableCases"]
+notes = "Matches upstream, which disagrees with int(); recorded as UP-032. int_parsing_size's 'input string' message on float inputs (UP-033) is matched too."
+
+[[requirement]]
+id = "errors.json-invalid"
+upstream = "pydantic/tests/test_types.py::test_invalid_model_json"
+title = "model_validate_json on text that is not JSON: json_invalid, input the text, ctx.error jiter's description"
+status = "implemented"
+realises = ["LeanPydantic.jsonInvalid", "LeanPydantic.validateJsonWith"]
+test = ["tests/Conformance.lean::tableCases"]
+
+# ----------------------------------------------------------------- models
+
+[[requirement]]
+id = "model.validate"
+upstream = "pydantic-core/tests/validators/test_model_fields.py::test_missing_error"
+title = "Model validation: every field validated, errors under the field name in field order, missing with the object as input, defaults for absent fields, extra keys ignored, last duplicate key wins"
+status = "implemented"
+realises = ["LeanPydantic.Fields.field", "LeanPydantic.Fields.member", "LeanPydantic.Fields.validate", "LeanPydantic.Model"]
+theorem = ["LeanPydantic.Fields.field_lawful", "LeanPydantic.Fields.nil_lawful", "LeanPydantic.Model.validate_loc_prefix"]
+test = ["tests/Conformance.lean::tableCases"]
+
+[[requirement]]
+id = "model.round-trip"
+upstream = "pydantic/tests/test_main.py::test_success"
+title = "model_validate(model_dump(m)) == m, strict or lax"
+status = "implemented"
+realises = ["LeanPydantic.Model.model_validate", "LeanPydantic.Model.model_dump"]
+theorem = ["LeanPydantic.Model.model_validate_model_dump", "LeanPydantic.LawfulJson.fromJson_toJson"]
+test = ["tests/Props.lean::properties", "tests/pbt/Pbt.lean"]
+notes = "The JSON-text round trip (model_validate_json of model_dump_json) is tested in Props; it rests on LeanJson's from_json_to_json, whose integer-size and depth side conditions every dump of these types meets."
+
+[[requirement]]
+id = "model.schema"
+upstream = "pydantic/tests/test_json_schema.py::test_constraints_schema_validation"
+title = "model_json_schema(): properties in field order with titles and defaults, required, title, type; keys sorted as pydantic sorts them"
+status = "implemented"
+realises = ["LeanPydantic.Model.model_json_schema", "LeanPydantic.Schema.toJson", "LeanPydantic.fieldTitle"]
+theorem = ["LeanPydantic.Model.schema_sound", "LeanPydantic.Model.model_dump_conforms"]
+test = ["tests/Conformance.lean::schemaCases", "tests/Props.lean::properties"]
+notes = "Soundness is stated for strict validation: lax coercions ('5' for an int) accept input the schema does not describe, in pydantic as here. Field titles use ASCII case mapping (Python's str.title maps all of Unicode)."
+
+[[requirement]]
+id = "model.dump-options"
+upstream = "pydantic/tests/test_main.py::test_success"
+title = "model_dump(include, exclude, exclude_defaults, exclude_none), model_dump_json(indent)"
+status = "partial"
+realises = ["LeanPydantic.DumpOpts", "LeanPydantic.Fields.keep", "LeanPydantic.Model.model_dump_json"]
+test = ["tests/Conformance.lean::handCases"]
+notes = "exclude_unset, by_alias and nested include/exclude dictionaries come with aliases and nested models (m2)."
+
+[[requirement]]
+id = "model.deriving"
+upstream = "pydantic/tests/test_main.py::test_default_factory_field"
+title = "deriving Model on a structure: fields, defaults, lawfulness, per-model theorems, pydantic method names"
+status = "implemented"
+realises = ["LeanPydantic.Derive.mkModelCmds", "LeanPydantic.Derive.mkModelHandler"]
+test = ["tests/Conformance.lean::tableCases"]
+notes = "Structures without parameters or parents, defaults that do not refer to other fields. default_factory, aliases, extra='forbid', nested models and validators are m2."
+
+[[requirement]]
+id = "api.type-adapter"
+upstream = "pydantic/tests/test_type_adapter.py"
+title = "TypeAdapter(T): validate_python, validate_json, dump_python, dump_json, json_schema"
+status = "implemented"
+realises = ["LeanPydantic.TypeAdapter.validate_python", "LeanPydantic.TypeAdapter.validate_json", "LeanPydantic.TypeAdapter.json_schema"]
+test = ["tests/Conformance.lean::tableCases"]

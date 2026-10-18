@@ -1,23 +1,29 @@
-    name = "LeanPydantic"
-    version = "0.1.0"
-    defaultTargets = ["LeanPydantic", "props", "conformance"]
+name = "LeanPydantic"
+version = "0.1.0"
+defaultTargets = ["LeanPydantic", "ConformanceTable", "props", "conformance"]
 
-    # The verified library. Everything under LeanPydantic/ except Transport.lean is a
-    # total function and the proof surface; see CONTRIBUTING.md.
-    [[lean_lib]]
-    name = "LeanPydantic"
+# The verified library. Everything under LeanPydantic/ is a total function
+# and the proof surface; see CONTRIBUTING.md.
+[[lean_lib]]
+name = "LeanPydantic"
 
-    # Property tests for what is tested rather than proved. No dependencies, runs
-    # in well under a second: `lake exe props [seed]`.
-    [[lean_exe]]
-    name = "props"
-    root = "tests.Props"
+# The pydantic-generated table the conformance runner replays
+# (scripts/conformance/generate.py writes it).
+[[lean_lib]]
+name = "ConformanceTable"
+roots = ["tests.ConformanceTable"]
 
-    # Conformance cases re-expressed from the upstream test suite:
-    # `lake exe conformance`. Each case names the upstream test it mirrors.
-    [[lean_exe]]
-    name = "conformance"
-    root = "tests.Conformance"
+# Property tests for what is tested rather than proved. Runs in well under a
+# second: `lake exe props [seed]`.
+[[lean_exe]]
+name = "props"
+root = "tests.Props"
+
+# Conformance cases re-expressed from the upstream test suite:
+# `lake exe conformance`. Each case names the upstream test it mirrors.
+[[lean_exe]]
+name = "conformance"
+root = "tests.Conformance"
 
 [[require]]
 name = "LeanJson"

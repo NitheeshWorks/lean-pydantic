@@ -7,7 +7,7 @@ status       : one of implemented | partial | tested | excluded | deviation
 
   scripts/traceability-check.py [--no-lean]
 """
-import subprocess, sys, tomllib
+import re, subprocess, sys, tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -33,7 +33,9 @@ def main():
         tmp.write_text(body)
         proc = subprocess.run(["lake", "env", "lean", str(tmp)], cwd=REPO, capture_output=True, text=True)
         for line in (proc.stdout + proc.stderr).splitlines():
-            if "error" in line: bad.append(line.strip())
+            # a Lean diagnostic (`file:line:col: error: ...`), not a symbol that
+            # merely has "error" in its name or type
+            if re.search(r":\d+:\d+: error", line): bad.append(line.strip())
     print(f"{len(rows)} requirements, {len(set(symbols))} symbols, {len(bad)} problems")
     for b in bad: print("  " + b)
     sys.exit(1 if bad else 0)

@@ -34,7 +34,114 @@ structure Property where
   name : String
   check : Rng → Option String × Rng
 
-def properties : List Property := []
+open LeanPydantic
+
+def okEq {ε α : Type} [DecidableEq α] : Except ε α → α → Bool
+  | .ok a, b => decide (a = b)
+  | .error _, _ => false
+
+structure Item where
+  name : String
+  description : Option String := none
+  price : Decimal
+  tax : Option Decimal := none
+  qty : Nat ∣ le 1000 := 1
+  deriving Model
+
+def Rng.int (r : Rng) (bound : Nat) : Int × Rng :=
+  let (v, r) := r.nat (2 * bound + 1)
+  ((v : Int) - bound, r)
+
+def Rng.pick {α : Type} [Inhabited α] (r : Rng) (xs : List α) : α × Rng :=
+  let (i, r) := r.nat xs.length
+  (xs[i]?.getD default, r)
+
+def Rng.string (r : Rng) : String × Rng := Id.run do
+  let (n, r) := r.nat 8
+  let mut r := r
+  let mut cs : List Char := []
+  for _ in [0:n] do
+    let (c, r') := r.pick ['a', 'Z', '0', ' ', '_', '"', '\\', 'é', '😀', '\n']
+    r := r'
+    cs := c :: cs
+  return (String.ofList cs, r)
+
+def Rng.decimal (r : Rng) : Decimal × Rng :=
+  let (m, r) := r.nat 100000
+  let (e, r) := r.int 6
+  let (neg, r) := r.nat 2
+  let d : Decimal := OfScientific.ofScientific m (decide (e < 0)) e.natAbs
+  (if neg == 1 then -d else d, r)
+
+/-- A check on one generated value. -/
+def prop (name : String) (gen : Rng → α × Rng) (ok : α → Bool) (disp : α → String) : Property :=
+  ⟨name, fun r => let (a, r) := gen r; (if ok a then none else some (disp a), r)⟩
+
+def properties : List Property := [
+  -- pydantic-core's str_as_int on the decimal forms upstream accepts
+  prop "strAsInt reads integers, padded, signed, zero-led and underscored"
+    (fun r => r.int 1000000)
+    (fun i =>
+      let s := toString i.natAbs
+      let sign := if i < 0 then "-" else ""
+      let forms := [sign ++ s, "  " ++ sign ++ s ++ "\n", sign ++ "000" ++ s,
+        (if i < 0 then "-" else "+") ++ s, sign ++ s ++ ".000",
+        sign ++ String.intercalate "_" (s.toList.map (String.singleton ·))]
+      forms.all fun f => okEq (Coerce.strAsInt f) i)
+    toString,
+  -- str_as_float on decimal text agrees with LeanJson's reading of the same text
+  prop "strAsFloat agrees with the JSON number reader"
+    (fun r => r.decimal)
+    (fun d =>
+      let s := LeanJson.printStr (.num (.float d))
+      match LeanJson.from_json s with
+      | .ok j => match j.val with
+        | .num n => okEq (Coerce.strAsFloat s) (Num.toDecimal n) && okEq (Coerce.strAsFloat (" " ++ s ++ " ")) (Num.toDecimal n)
+        | _ => false
+      | .error _ => false)
+    toString,
+  -- a printed schema has its keys sorted at every level but `properties`
+  prop "model_json_schema keys are sorted"
+    (fun r => ((), r))
+    (fun _ => match Item.model_json_schema with
+      | .obj kvs => (kvs.map (·.1)) == ["properties", "required", "title", "type"]
+      | _ => false)
+    (fun _ => toString Item.model_json_schema),
+  -- the JSON-text round trip (LeanJson's printer and parser in between)
+  prop "model_validate_json (model_dump_json a) = a"
+    (fun r =>
+      let (name, r) := r.string
+      let (p, r) := r.decimal
+      let (t, r) := r.decimal
+      let (hasTax, r) := r.nat 2
+      let (q, r) := r.nat 1001
+      let qty : Nat ∣ le 1000 := if h : q ≤ 1000 then ⟨q, h⟩ else 0
+      let item : Item := { name := name, price := p, tax := if hasTax == 1 then some t else none, qty := qty }
+      (item, r))
+    (fun a => match Item.model_validate_json a.model_dump_json with
+      | .ok b => b.val.model_dump_json == a.model_dump_json
+      | .error _ => false)
+    (fun a => a.model_dump_json),
+  -- Rust's Display of a decimal, as pydantic-core renders ctx numbers
+  prop "Num.display has no exponent and no trailing fraction zeros"
+    (fun r => r.decimal)
+    (fun d =>
+      let s := Num.display (.float d)
+      !s.contains 'e' && (!s.contains '.' || !s.endsWith "0") && !s.endsWith ".")
+    toString,
+  -- validation in pydantic order reports the lowest-ranked failing atom
+  prop "validatePy reports multiple_of before le before ge"
+    (fun r => r.int 200)
+    (fun x =>
+      let c : Keel.Constraint Int := .and (.ge (-50)) (.and (.le 50) (.multipleOf 7))
+      match c.validatePy x with
+      | .ok _ => x % 7 == 0 && -50 ≤ x && x ≤ 50
+      | .error (e :: _) =>
+        let expected := if x % 7 != 0 then 0 else if x > 50 then 1 else 3
+        Keel.Constraint.rank e.failed == expected
+      | .error [] => false)
+    toString
+]
 
 def main (args : List String) : IO UInt32 := do
   let seed := (args.head? >>= String.toNat?).getD 88172645463325252

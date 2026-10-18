@@ -104,30 +104,39 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
         (hs : cfg.strict = true) (h : LeanPydantic.fromJson cfg j = .ok a) :
         LeanPydantic.Conforms (LeanPydantic.JsonSchema.schema $tyId) j :=
       LeanPydantic.LawfulJson.schema_sound cfg j a hs h))
+  let obj := mkIdent `obj
+  let strict := mkIdent `strict
+  let data := mkIdent `data
+  let self := mkIdent `self
+  let incl := mkIdent `«include»
+  let excl := mkIdent `exclude
+  let exd := mkIdent `exclude_defaults
+  let exn := mkIdent `exclude_none
+  let indent := mkIdent `indent
   elabCommand (← `(command|
     /-- `Model.model_validate(obj, strict=None)`. -/
-    def $(mkIdent (n ++ `model_validate)) (obj : LeanJson.Json) (strict : Bool := false) :=
-      LeanPydantic.Model.model_validate $tyId obj strict))
+    def $(mkIdent (n ++ `model_validate)) ($obj : LeanJson.Json) ($strict : Bool := false) :=
+      LeanPydantic.Model.model_validate $tyId $obj $strict))
   elabCommand (← `(command|
     /-- `Model.model_validate_json(data, strict=None)`. -/
-    def $(mkIdent (n ++ `model_validate_json)) (data : String) (strict : Bool := false) :=
-      LeanPydantic.Model.model_validate_json $tyId data strict))
+    def $(mkIdent (n ++ `model_validate_json)) ($data : String) ($strict : Bool := false) :=
+      LeanPydantic.Model.model_validate_json $tyId $data $strict))
   elabCommand (← `(command|
     /-- `Model.model_json_schema()`. -/
     def $(mkIdent (n ++ `model_json_schema)) : LeanJson.Json :=
       LeanPydantic.Model.model_json_schema $tyId))
   elabCommand (← `(command|
     /-- `model.model_dump(include=, exclude=, exclude_defaults=, exclude_none=)`. -/
-    def $(mkIdent (n ++ `model_dump)) (self : $tyId) («include» : Option (List String) := none)
-        (exclude : List String := []) (exclude_defaults : Bool := false) (exclude_none : Bool := false) :
+    def $(mkIdent (n ++ `model_dump)) ($self : $tyId) ($incl : Option (List String) := none)
+        ($excl : List String := []) ($exd : Bool := false) ($exn : Bool := false) :
         LeanJson.Json :=
-      LeanPydantic.Model.model_dump self «include» exclude exclude_defaults exclude_none))
+      LeanPydantic.Model.model_dump $self $incl $excl $exd $exn))
   elabCommand (← `(command|
     /-- `model.model_dump_json(indent=None, ...)`. -/
-    def $(mkIdent (n ++ `model_dump_json)) (self : $tyId) (indent : Option Nat := none)
-        («include» : Option (List String) := none) (exclude : List String := [])
-        (exclude_defaults : Bool := false) (exclude_none : Bool := false) : String :=
-      LeanPydantic.Model.model_dump_json self indent «include» exclude exclude_defaults exclude_none))
+    def $(mkIdent (n ++ `model_dump_json)) ($self : $tyId) ($indent : Option Nat := none)
+        ($incl : Option (List String) := none) ($excl : List String := [])
+        ($exd : Bool := false) ($exn : Bool := false) : String :=
+      LeanPydantic.Model.model_dump_json $self $indent $incl $excl $exd $exn))
 
 /-- The `deriving Model` handler. -/
 def mkModelHandler (declNames : Array Name) : CommandElabM Bool := do

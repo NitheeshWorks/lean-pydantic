@@ -206,27 +206,27 @@ def TypeAdapter.new (α : Type) : TypeAdapter α := ⟨⟩
 
 namespace TypeAdapter
 
-variable {α : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (_ta : TypeAdapter α)
+variable {α : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α]
 
 /-- `TypeAdapter.validate_python(obj, strict=None)`. -/
-def validate_python (obj : Json) (strict : Bool := false) :
+def validate_python (_ : TypeAdapter α) (obj : Json) (strict : Bool := false) :
     Except ValidationError {a : α // Validated { strict } obj a} :=
   validateWith α { strict } obj
 
 /-- `TypeAdapter.validate_json(data, strict=None)`. -/
-def validate_json (data : String) (strict : Bool := false) := validateJsonWith α strict data
+def validate_json (_ : TypeAdapter α) (data : String) (strict : Bool := false) := validateJsonWith α strict data
 
 /-- `TypeAdapter.dump_python(value)`. -/
-def dump_python (a : α) («include» : Option (List String) := none) (exclude : List String := [])
+def dump_python (_ : TypeAdapter α) (a : α) («include» : Option (List String) := none) (exclude : List String := [])
     (exclude_defaults : Bool := false) (exclude_none : Bool := false) : Json :=
   dumpWith a «include» exclude exclude_defaults exclude_none
 
 /-- `TypeAdapter.dump_json(value, indent=None)`. -/
-def dump_json (a : α) (indent : Option Nat := none) : String :=
+def dump_json (_ : TypeAdapter α) (a : α) (indent : Option Nat := none) : String :=
   LeanJson.printStr (toJson {} a) { indent }
 
 /-- `TypeAdapter.json_schema()`. -/
-def json_schema : Json := (JsonSchema.schema α).toJson
+def json_schema (_ : TypeAdapter α) : Json := (JsonSchema.schema α).toJson
 
 end TypeAdapter
 

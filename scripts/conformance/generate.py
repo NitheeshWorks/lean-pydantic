@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Generate tests/ConformanceTable.lean by running pydantic on many inputs.
+
+A developer tool, not run in CI (the stack runs no Python in CI). It needs the
+released pydantic named in docs/traceability.toml:
+
+  /home/nitheesh/Official/NitheeshWorks/upstream-spec/.venv/bin/python -I \
+      scripts/conformance/generate.py > tests/ConformanceTable.lean
+
+Each row is (upstream test, Lean type tag, mode, strict, input JSON text,
+pydantic's output). The output is `dump_json` of the result, or the
+`ValidationError.json()` of the failure, byte for byte. Rows whose Python-mode
+input `json.loads` would change (huge or over-precise floats) are not
+generated.
+"""
+import json, sys
+from typing import Annotated, Optional
+from pydantic import BaseModel, Field, FiniteFloat, NonNegativeInt, TypeAdapter, ValidationError
+
+class Item(BaseModel):
+    name: str
+    description: Optional[str] = None
+    price: FiniteFloat
+    tax: Optional[FiniteFloat] = None
+
+class Offer(BaseModel):
+    price: Annotated[FiniteFloat, Field(gt=0)]
+    discount: Annotated[NonNegativeInt, Field(le=100)] = 0
+    q: Optional[Annotated[str, Field(max_length=50, min_length=3)]] = None
+    item_id: int
+    ok: bool = True
+
+TYPES = {
+    'int': int,
+    'nat': NonNegativeInt,
+    'float': FiniteFloat,
+    'bool': bool,
+    'str': str,
+    'opt_int': Optional[int],
+    'opt_str': Optional[str],
+    'int_gt0_le100': Annotated[int, Field(gt=0, le=100)],
+    'int_mult3': Annotated[int, Field(multiple_of=3, ge=-10, lt=50)],
+    'str_3_5': Annotated[str, Field(min_length=3, max_length=5)],
+    'str_1_1': Annotated[str, Field(min_length=1, max_length=1)],
+    'float_gt0_le2_5_mult0_5': Annotated[FiniteFloat, Field(gt=0, le=2.5, multiple_of=0.5)],
+    'nat_le10': Annotated[NonNegativeInt, Field(le=10)],
+    'item': Item,
+    'offer': Offer,
+}
+
+PC = 'pydantic-core/tests/validators/'
+INT_IN = ['0', '1', '-1', '42', '"42"', '" 42 "', '"+5"', '"-0"', '"01"', '"09"', '"00_"', '"0:"',
+    '"+4_2"', '"+0_42"', '"+4_2.0"', '"+04_2.0"', '"++4_2"', '"-+1"', '"+-1"', '"--0001"', '"-+0001"',
+    '"-0-001"', '"-0+001"', '"-00001"', '"-00042_000"', '"4_2"', '"0_42"', '"4_2.0"', '"04_2.0"',
+    '"  04_2.0 "', '"  0_42.0 "', '"  _042.0 "', '"42_"', '"42_.0"', '"000001"', '"123456789.0"', '" "',
+    '"1."', '"42."', '"123456789123456.00001"', '10000000000', '9223372036854775807',
+    '9223372036854775808', '18446744073709551614', '12.5', '"wrong"', 'null', '[1, 2]', '{}', 'true',
+    'false', '1.0', '-0.0', '1e3', '"1e3"', '"1.5"', '"0x10"', '""', '"12a"', '"0-5"', '"00-7"',
+    '"1_000"', '"1__0"', '"_1"', '"1_"', '9.2e18', '9.3e18', '1e19', 'NaN', 'Infinity', '-Infinity',
+    '"\\u20021\\u2002"', '"9' + '9' * 4300 + '"']
+FLOAT_IN = ['0', '1', '-1', '1.5', '-2.25', '"1.5"', '" 1.5 "', '"1e3"', '"1_0"', '"1_000.5"', 'true',
+    'false', '"abc"', 'null', '"-0"', '"inf"', '"nan"', '"-inf"', '"Infinity"', 'NaN', 'Infinity',
+    '-Infinity', '[]', '{}', '"1."', '".5"', '"+.5"', '"e5"', '"."', '"1e"', '"1e+5"', '0.1', '100.0',
+    '1e20', '1e-7', '"1_"', '" 1_0"']
+BOOL_IN = ['true', 'false', '"true"', '"True"', '"TRUE"', '"yes"', '"on"', '"1"', '"0"', '"f"', '"n"',
+    '"off"', '" true"', '1', '0', '2', '-1', '1.0', '0.0', '1.5', '2.0', 'null', '"t"', '"y"', '"no"',
+    '"false"', '"maybe"', '[]', '9223372036854775808', 'NaN']
+STR_IN = ['""', '"x"', '"hello"', '1', '1.5', 'true', 'null', '[]', '{}', '"caf\\u00e9"', '"\\ud83d\\ude00"']
+OPT_IN = ['null', '1', '"x"', '1.5', 'true', '[]']
+CON_INT_IN = ['0', '1', '50', '100', '101', '-1', '"7"', '7', '9', '-12', '-9', '48', '51', '1.5', '"x"']
+CON_STR_IN = ['""', '"ab"', '"abc"', '"abcde"', '"abcdef"', '"a"', '"\\u00e9\\u00e9\\u00e9"', '"\\ud83d\\ude00"', '5']
+CON_FLOAT_IN = ['0', '0.5', '0.7', '1', '2.5', '3', '2.75', '-1', '"1.5"', 'NaN', '0.25']
+NAT_IN = ['0', '5', '10', '11', '-1', '"3"', '1.0', '-0.5']
+ITEM_IN = ['{"price": -1}', '5', '[]', '"x"', 'null', '{"name": 1, "price": "abc"}',
+    '{"name": "x", "price": "1.5"}', '{"name": "Foo", "price": 50.5}',
+    '{"name": "Foo", "description": "A very nice Item", "price": 35.4, "tax": 3.2}',
+    '{"name": "x", "price": 1, "tax": null}', '{"name": "x", "price": 1, "extra": [1, 2]}',
+    '{"name": "x", "name": "y", "price": 2}', '{"name": null, "price": null}', '{}',
+    '{"name": "x", "price": NaN}', '{"name": "x", "price": 1, "description": 7}']
+OFFER_IN = ['{"price": 0, "discount": 101, "q": "ab", "item_id": "x1", "ok": "maybe"}',
+    '{"price": 1, "discount": 1.5, "item_id": 1.0, "q": 5}', '{"price": 1, "item_id": true, "discount": "1.0"}',
+    '{"price": 2.5, "item_id": 3}', '{"price": -1, "item_id": 3, "discount": -1}', '{"item_id": 1}',
+    '{"price": 1, "item_id": 1, "q": "abcd", "ok": "yes"}', '{"price": 1, "item_id": 1, "q": null}',
+    '7', '{"price": "inf", "item_id": 1}']
+
+ROWS = [
+    ('int', INT_IN, PC + 'test_int.py::test_int_py_and_json'),
+    ('nat', NAT_IN, 'pydantic/tests/test_types.py::test_strict_raw_type'),
+    ('float', FLOAT_IN, PC + 'test_float.py::test_non_finite_json_values'),
+    ('bool', BOOL_IN, PC + 'test_bool.py::test_bool'),
+    ('str', STR_IN, PC + 'test_string.py::test_str'),
+    ('opt_int', OPT_IN, PC + 'test_nullable.py::test_nullable'),
+    ('opt_str', OPT_IN, PC + 'test_nullable.py::test_nullable'),
+    ('int_gt0_le100', CON_INT_IN, PC + 'test_int.py::test_int_kwargs'),
+    ('int_mult3', CON_INT_IN, PC + 'test_int.py::test_int_kwargs'),
+    ('str_3_5', CON_STR_IN, PC + 'test_string.py::test_constrained_str'),
+    ('str_1_1', CON_STR_IN, PC + 'test_string.py::test_constrained_str'),
+    ('float_gt0_le2_5_mult0_5', CON_FLOAT_IN, PC + 'test_float.py::test_float_kwargs'),
+    ('nat_le10', NAT_IN, 'pydantic/tests/test_types.py::test_constraints_arbitrary_type'),
+    ('item', ITEM_IN, 'pydantic/tests/test_main.py::test_ultra_simple_failed'),
+    ('offer', OFFER_IN, 'pydantic/tests/test_main.py::test_default_factory_field'),
+]
+STRICT_ROWS = [
+    ('int', ['1', '"1"', '1.0', 'true', 'null'], PC + 'test_int.py::test_int_strict'),
+    ('float', ['1', '1.5', '"1.5"', 'true'], PC + 'test_float.py::test_float_strict'),
+    ('bool', ['true', '"true"', '1'], PC + 'test_bool.py::test_bool_strict'),
+    ('str', ['"x"', '1'], PC + 'test_string.py::test_str'),
+    ('item', ['{"name": "x", "price": 1}', '{"name": "x", "price": "1"}'], 'pydantic/tests/test_main.py::test_model_validate_strict'),
+]
+JSON_ONLY = [('item', ['{"name": "x",', '{"name": "x", "price": 1} x', '', '[1,]'],
+    'pydantic/tests/test_types.py::test_invalid_model_json'),
+    ('int', ['"1', '01', '-'], 'pydantic/tests/test_types.py::test_invalid_simple_json')]
+
+def lean_str(s):
+    out = []
+    for ch in s:
+        if ch == '\\': out.append('\\\\')
+        elif ch == '"': out.append('\\"')
+        elif ch == '\n': out.append('\\n')
+        elif ord(ch) < 0x20 or ord(ch) == 0x7f: out.append('\\u%04x' % ord(ch))
+        else: out.append(ch)
+    return '"' + ''.join(out) + '"'
+
+def run(tag, mode, strict, text):
+    ta = TypeAdapter(TYPES[tag])
+    try:
+        if mode == 'json':
+            r = ta.validate_json(text, strict=strict)
+        else:
+            r = ta.validate_python(json.loads(text), strict=strict)
+        return ta.dump_json(r).decode()
+    except ValidationError as e:
+        return e.json()
+
+def python_ok(text):
+    """json.loads keeps the value as LeanJson does."""
+    try:
+        v = json.loads(text)
+    except Exception:
+        return False
+    def ok(x):
+        if isinstance(x, float):
+            return x != x or abs(x) == float('inf') or repr(x) in text or float(repr(x)) == x and len(repr(x)) < 18
+        if isinstance(x, list): return all(ok(y) for y in x)
+        if isinstance(x, dict): return len(x) == text.count(':') and all(ok(y) for y in x.values())
+        return True
+    return ok(v)
+
+rows = []
+for tag, inputs, ref in ROWS:
+    for text in inputs:
+        for mode in ('python', 'json'):
+            if mode == 'python' and not python_ok(text): continue
+            rows.append((ref, tag, mode, False, text, run(tag, mode, False, text)))
+for tag, inputs, ref in STRICT_ROWS:
+    for text in inputs:
+        for mode in ('python', 'json'):
+            rows.append((ref, tag, mode, True, text, run(tag, mode, True, text)))
+for tag, inputs, ref in JSON_ONLY:
+    for text in inputs:
+        rows.append((ref, tag, 'json', False, text, run(tag, 'json', False, text)))
+
+schemas = [(tag, json.dumps(TypeAdapter(t).json_schema(), separators=(',', ':'), ensure_ascii=False))
+           for tag, t in TYPES.items()]
+
+print('/-! Generated by `scripts/conformance/generate.py` from pydantic 2.14.1 /')
+print('pydantic-core 2.50.1. Do not edit by hand. -/')
+print()
+print('/-- (upstream test, type tag, mode, strict, input, pydantic output) -/')
+print('def validationTable : List (String × String × String × Bool × String × String) := [')
+print(',\n'.join('  (%s, %s, %s, %s, %s, %s)' % (lean_str(r), lean_str(t), lean_str(m), 'true' if s else 'false',
+      lean_str(i), lean_str(o)) for r, t, m, s, i, o in rows))
+print(']')
+print()
+print('/-- (type tag, `TypeAdapter(T).json_schema()`, compact) -/')
+print('def schemaTable : List (String × String) := [')
+print(',\n'.join('  (%s, %s)' % (lean_str(t), lean_str(s)) for t, s in schemas))
+print(']')
