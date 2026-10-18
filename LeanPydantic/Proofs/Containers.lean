@@ -156,11 +156,46 @@ theorem dedup_of_nodup {β : Type} (kvs : List (String × β)) (h : (kvs.map Pro
 
 theorem dumpMembers_roundTrip {α : Type} [ToJson α] :
     ∀ kvs : List (String × α),
-      dumpMembers DumpOpts.roundTrip kvs = kvs.map fun kv => (kv.1, toJson DumpOpts.roundTrip kv.2)
+      dumpMembers DumpOpts.roundTrip kvs = kvs.map fun kv => (kv.1, toJson DumpOpts.roundTrip kv.2) := by
+  intro kvs
+  simp only [dumpMembers]
+  rfl
+
+/-! ### The linear implementation is the specification -/
+
+theorem dictInsert_eq_insertLast (k : String) (v : Json) :
+    ∀ l : List (String × Json), dictInsert k v l = Json.insertLast k v l
   | [] => rfl
-  | (k, v) :: kvs => by
-    simp only [dumpMembers, List.map_cons, dumpMembers_roundTrip kvs]
-    rfl
+  | (k', v') :: l => by simp only [dictInsert, Json.insertLast, dictInsert_eq_insertLast k v l]
+
+/-- The hash-indexed collapse is `dedup`. -/
+theorem dedupFast_eq (kvs : List (String × Json)) : dedupFast kvs = dedup kvs := dedupIdx_eq kvs
+
+theorem validateMembersGo_eq {α : Type} [FromJson α] (cfg : Cfg) :
+    ∀ (kvs : List (String × Json)) (oks : List (String × α)) (errs : List (List ErrorDetails))
+      (failed : Bool),
+      validateMembersGo cfg kvs oks errs failed =
+        match validateMembers cfg kvs with
+        | .ok as => if failed then .error errs.reverse.flatten else .ok (oks.reverse ++ as)
+        | .error e => .error (errs.reverse.flatten ++ e)
+  | [], oks, errs, failed => by cases failed <;> simp [validateMembersGo, validateMembers]
+  | (k, v) :: kvs, oks, errs, failed => by
+    rw [validateMembersGo, validateMembers]
+    cases ha : Keel.Validator.at (.key k) (fromJson (α := α) cfg) v <;>
+      cases hr : validateMembers (α := α) cfg kvs <;> cases failed <;>
+      simp [validateMembersGo_eq cfg kvs, hr]
+
+/-- The tail loop is `validateMembers`. -/
+theorem validateMembersFast_eq {α : Type} [FromJson α] (cfg : Cfg) (kvs : List (String × Json)) :
+    validateMembersFast (α := α) cfg kvs = validateMembers cfg kvs := by
+  rw [validateMembersFast, validateMembersGo_eq]
+  cases validateMembers (α := α) cfg kvs <;> simp
+
+/-- A dict validates as `validateMembers` on the collapsed members says. -/
+theorem fromJson_dict_obj {α : Type} [FromJson α] (cfg : Cfg) (kvs : List (String × Json)) :
+    fromJson (α := Dict α) cfg (.obj ⟨kvs⟩) = (validateMembers cfg (dedup kvs)).map Dict.ofEntries := by
+  show (validateMembersFast cfg (dedupFast kvs)).map Dict.ofEntries = _
+  rw [validateMembersFast_eq, dedupFast_eq]
 
 theorem validateMembers_dump {α : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] (cfg : Cfg) :
     ∀ kvs : List (String × α),
@@ -205,10 +240,10 @@ theorem checkValues_iff (s : Schema) :
 instance {α : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] : LawfulJson (Dict α) where
   fromJson_toJson cfg d := by
     obtain ⟨kvs, hn⟩ := d
-    show (validateMembers cfg (dedup (dumpMembers DumpOpts.roundTrip kvs))).map Dict.ofEntries = _
-    rw [dumpMembers_roundTrip, dedup_of_nodup _ (by simpa [Function.comp_def] using hn),
+    show fromJson cfg (.obj ⟨dumpMembers DumpOpts.roundTrip kvs⟩) = _
+    rw [fromJson_dict_obj, dumpMembers_roundTrip, dedup_of_nodup _ (by simpa [Function.comp_def] using hn),
       validateMembers_dump]
-    simp [Except.map, Dict.ofEntries, hn]
+    simp [Except.map, Dict.ofEntries, (nodupFast_iff _).2 hn]
   schema_sound cfg j d hs h := by
     cases j with
     | obj a =>
@@ -216,7 +251,7 @@ instance {α : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] :
       | mk kvs =>
         show Schema.check (.dict _) _ = true
         simp only [Schema.check]
-        change (validateMembers cfg (dedup kvs)).map Dict.ofEntries = _ at h
+        rw [fromJson_dict_obj] at h
         cases hm : validateMembers (α := α) cfg (dedup kvs) with
         | error e => rw [hm] at h; cases h
         | ok as =>
@@ -230,7 +265,7 @@ instance {α : Type} [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] :
     | obj a =>
       cases a with
       | mk kvs =>
-        show (validateMembers cfg (dedup kvs)).map Dict.ofEntries ≠ _
+        rw [fromJson_dict_obj]
         have := validateMembers_ne_nil (α := α) cfg (LawfulJson.errors_ne_nil cfg) (dedup kvs)
         cases hm : validateMembers (α := α) cfg (dedup kvs) <;> simp_all [Except.map]
     | _ => nofun

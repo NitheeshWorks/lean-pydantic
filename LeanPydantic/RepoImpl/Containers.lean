@@ -1,4 +1,6 @@
 import LeanPydantic.RepoImpl.Fields
+import LeanPydantic.RepoImpl.Nodup
+import LeanPydantic.RepoImpl.Dedup
 
 /-!
 # RepoImpl: containers
@@ -14,6 +16,13 @@ A list validates every element, each under its index (Keel's
 every value under its key. Object members are first collapsed as a Python
 `dict` collapses them (`dedup`: one entry per key, at the key's first
 position, with its last value).
+
+Every pass over a dict's members is linear in their number and runs in
+constant stack: duplicates collapse through lean-json's hash index
+(`dedupIdx`, proved equal to `dedup`), members validate in a tail
+loop (`validateMembersFast`, proved equal to `validateMembers`), and the
+keys' distinctness is decided with a hash set (`nodupFast`), never by
+comparing every pair. A body with 100 000 keys is not a denial of service.
 -/
 
 namespace LeanPydantic
@@ -83,20 +92,39 @@ def validateMembers {α : Type} [FromJson α] (cfg : Cfg) :
     | .ok _, .error e => .error e
     | .error e₁, .error e₂ => .error (e₁ ++ e₂)
 
-/-- The validated members as a dictionary (the keys were already distinct). -/
+/-- `validateMembers` as a tail loop: the members validated so far (in
+reverse), the errors so far (chunks in reverse), and whether any failed. -/
+def validateMembersGo {α : Type} [FromJson α] (cfg : Cfg) :
+    List (String × Json) → List (String × α) → List (List ErrorDetails) → Bool →
+      Except (List ErrorDetails) (List (String × α))
+  | [], oks, errs, failed => if failed then .error errs.reverse.flatten else .ok oks.reverse
+  | (k, v) :: kvs, oks, errs, failed =>
+    match (Keel.Validator.at (.key k) (fromJson cfg)) v with
+    | .ok a => validateMembersGo cfg kvs ((k, a) :: oks) errs failed
+    | .error e => validateMembersGo cfg kvs oks (e :: errs) true
+
+/-- `validateMembers`, in constant stack (`validateMembersFast_eq`). -/
+def validateMembersFast {α : Type} [FromJson α] (cfg : Cfg) (kvs : List (String × Json)) :
+    Except (List ErrorDetails) (List (String × α)) :=
+  validateMembersGo cfg kvs [] [] false
+
+/-- `dedup` on JSON members, through a hash index sized up front. -/
+def dedupFast (kvs : List (String × Json)) : List (String × Json) := dedupIdx kvs
+
+/-- The validated members as a dictionary (the keys were already distinct;
+checked in linear time). -/
 def Dict.ofEntries {α : Type} (kvs : List (String × α)) : Dict α :=
-  if h : (kvs.map Prod.fst).Nodup then ⟨kvs, h⟩ else ⟨[], List.nodup_nil⟩
+  if h : nodupFast (kvs.map Prod.fst) = true then ⟨kvs, (nodupFast_iff _).1 h⟩ else ⟨[], List.nodup_nil⟩
 
 instance fromJsonDict {α : Type} [FromJson α] : FromJson (Dict α) where
   title := "dict[str," ++ FromJson.title α ++ "]"
   fromJson cfg
-    | .obj ⟨kvs⟩ => (validateMembers cfg (dedup kvs)).map Dict.ofEntries
+    | .obj ⟨kvs⟩ => (validateMembersFast cfg (dedupFast kvs)).map Dict.ofEntries
     | j => .error [{ kind := .dictType, input := j, mode := cfg.mode }]
 
 /-- Dump the members. -/
-def dumpMembers {α : Type} [ToJson α] (o : DumpOpts) : List (String × α) → List (String × Json)
-  | [] => []
-  | (k, v) :: kvs => (k, toJson (o.nested (Fields.setMember o.set_from k)) v) :: dumpMembers o kvs
+def dumpMembers {α : Type} [ToJson α] (o : DumpOpts) (kvs : List (String × α)) : List (String × Json) :=
+  kvs.map fun kv => (kv.1, toJson (o.nested (Fields.setMember o.set_from kv.1)) kv.2)
 
 instance toJsonDict {α : Type} [ToJson α] : ToJson (Dict α) := ⟨fun o d => .obj ⟨dumpMembers o d.entries⟩⟩
 
@@ -127,16 +155,22 @@ structure PySet (α : Type) where
   elems : List α
   nodup : elems.Nodup
 
-/-- The first occurrence of each element, in order. -/
-def firstOccurrences {α : Type} [DecidableEq α] (xs : List α) : List α :=
-  (xs.foldl (fun acc x => if x ∈ acc then acc else x :: acc) []).reverse
+/-- The first occurrence of each element, in order, in one pass with a hash
+set of the elements seen. -/
+def firstOccurrences {α : Type} [BEq α] [Hashable α] (xs : List α) : List α :=
+  go (Std.HashSet.emptyWithCapacity xs.length) [] xs
+where
+  /-- Seen so far, kept so far (reversed), the rest. -/
+  go (seen : Std.HashSet α) (acc : List α) : List α → List α
+    | [] => acc.reverse
+    | x :: xs => if seen.contains x then go seen acc xs else go (seen.insert x) (x :: acc) xs
 
-/-- A set of the elements (each once). -/
-def PySet.ofList {α : Type} [DecidableEq α] (xs : List α) : PySet α :=
+/-- A set of the elements (each once; distinctness decided in linear time). -/
+def PySet.ofList {α : Type} [DecidableEq α] [Hashable α] [LawfulHashable α] (xs : List α) : PySet α :=
   let ys := firstOccurrences xs
-  if h : ys.Nodup then ⟨ys, h⟩ else ⟨[], List.nodup_nil⟩
+  if h : nodupFast ys = true then ⟨ys, (nodupFast_iff _).1 h⟩ else ⟨[], List.nodup_nil⟩
 
-instance {α : Type} [FromJson α] [DecidableEq α] : FromJson (PySet α) where
+instance {α : Type} [FromJson α] [DecidableEq α] [Hashable α] [LawfulHashable α] : FromJson (PySet α) where
   title := "set[" ++ FromJson.title α ++ "]"
   fromJson cfg j :=
     let err : Except (List ErrorDetails) (PySet α) := .error [{ kind := .setType, input := j, mode := cfg.mode }]

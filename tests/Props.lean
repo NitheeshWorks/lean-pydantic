@@ -77,7 +77,23 @@ def Rng.decimal (r : Rng) : Decimal × Rng :=
 def prop (name : String) (gen : Rng → α × Rng) (ok : α → Bool) (disp : α → String) : Property :=
   ⟨name, fun r => let (a, r) := gen r; (if ok a then none else some (disp a), r)⟩
 
+/-- A digit string of up to 5000 digits. -/
+def Rng.digits (r : Rng) : List Char × Rng := Id.run do
+  let (n, r) := r.nat 5000
+  let mut r := r
+  let mut cs : List Char := []
+  for _ in [0:n] do
+    let (d, r') := r.nat 10
+    r := r'
+    cs := Char.ofNat (48 + d) :: cs
+  return (cs, r)
+
 def properties : List Property := [
+  -- the balanced digit conversion is the left-to-right one
+  prop "digitsVal is the left-to-right digit fold, up to 5000 digits"
+    (fun r => r.digits)
+    (fun cs => Coerce.digitsVal cs == cs.foldl (fun n c => 10 * n + (c.toNat - 48)) 0)
+    (fun cs => String.ofList cs),
   -- pydantic-core's str_as_int on the decimal forms upstream accepts
   prop "strAsInt reads integers, padded, signed, zero-led and underscored"
     (fun r => r.int 1000000)

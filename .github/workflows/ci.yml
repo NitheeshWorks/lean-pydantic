@@ -27,6 +27,8 @@ jobs:
         run: lake exe props
       - name: Conformance
         run: lake exe conformance
+      - name: Benches (hostile sizes, with bounds)
+        run: lake exe bench
       - name: Traceability
         run: python3 scripts/traceability-check.py
 

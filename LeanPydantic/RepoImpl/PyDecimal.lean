@@ -14,7 +14,8 @@ The bounds `gt`, `ge`, `lt`, `le`, `multiple_of` are the usual refinement:
 
 As in pydantic-core:
 
-* JSON: an integer is exact; a float is read as Rust prints the `f64`
+* JSON: an integer is exact; a float is parsed as an `f64` (`1e400` is
+  `finite_number`) and read as Rust prints it
   (no exponent, `1e3` is `1000`); a string is parsed as `Decimal(str)`
   does; anything else is `decimal_type`.
 * Python (lax): the same, except that a float goes through `str(float)`
@@ -79,18 +80,31 @@ instance : ToString PyDecimal := ⟨toPy⟩
 /-- An integer. -/
 def ofInt (i : Int) : PyDecimal := ⟨i < 0, i.natAbs, 0⟩
 
-/-- A JSON float as pydantic-core reads it: `Decimal` of Rust's `f64`
-display, which has no exponent and no `.0`. -/
-def ofRust (d : Decimal) : PyDecimal :=
-  if d.exp ≥ 0 then ⟨d.neg, d.mant * 10 ^ d.exp.toNat, 0⟩ else ⟨d.neg, d.mant, d.exp⟩
+/-- The literal read as an `f64`, as its shortest decimal digits; `none` if
+it overflows to an infinity. -/
+def asDouble (d : Decimal) : Option Decimal :=
+  let x := (Number.float d).toFloat
+  if !x.isFinite then none else
+  match Number.ofFloat x with
+  | .float e => some e
+  | _ => none
+
+/-- A JSON float as pydantic-core reads it: the literal is parsed as an
+`f64` (so `1e400` is `inf`, and `none` here), then `Decimal` of Rust's
+display of it, which has no exponent and no `.0`. The double's shortest
+digits have an exponent of at most 308, so the scaling is bounded. -/
+def ofRust (d : Decimal) : Option PyDecimal :=
+  (asDouble d).map fun e => if e.exp ≥ 0 then ⟨e.neg, e.mant * 10 ^ e.exp.toNat, 0⟩ else ⟨e.neg, e.mant, e.exp⟩
 
 /-- A Python float as pydantic reads it: `Decimal(str(float))`. `repr`
 writes `1000.0` (fixed, with `.0`) for a decimal exponent in `[-4, 16)` and
-`1e+16` otherwise. -/
-def ofRepr (d : Decimal) : PyDecimal :=
-  let adj : Int := d.exp + (toString d.mant).length - 1
-  if -4 ≤ adj ∧ adj < 16 ∧ d.exp ≥ 0 then ⟨d.neg, d.mant * 10 ^ d.exp.toNat * 10, -1⟩
-  else ⟨d.neg, d.mant, d.exp⟩
+`1e+16` otherwise. A literal that overflows the double is `inf`, so
+`none`. -/
+def ofRepr (d : Decimal) : Option PyDecimal :=
+  (asDouble d).map fun d =>
+    let adj : Int := d.exp + (toString d.mant).length - 1
+    if -4 ≤ adj ∧ adj < 16 ∧ d.exp ≥ 0 then ⟨d.neg, d.mant * 10 ^ d.exp.toNat * 10, -1⟩
+    else ⟨d.neg, d.mant, d.exp⟩
 
 /-- The leading digits, and what follows. -/
 def digitRun : List Char → List Char × List Char
@@ -102,7 +116,7 @@ def digitRun : List Char → List Char × List Char
     else ([], c :: rest)
 
 /-- Digits as a number. -/
-def digitsValue (ds : List Char) : Nat := ds.foldl (fun n d => 10 * n + (d.toNat - '0'.toNat)) 0
+def digitsValue (ds : List Char) : Nat := Coerce.digitsVal ds
 
 /-- What `Decimal(s)` makes of a string. -/
 inductive Parsed where
@@ -172,7 +186,9 @@ def Scalar.decimal (cfg : Cfg) (j : Json) : Except ErrorKind PyDecimal :=
   | .json =>
     match j with
     | .num (.int i) => .ok (.ofInt i)
-    | .num (.float d) => .ok (.ofRust d)
+    | .num (.float d) => match PyDecimal.ofRust d with
+      | some p => .ok p
+      | none => .error .finiteNumber
     | .num _ => .error .finiteNumber
     | .str s => str s
     | _ => .error .decimalType
@@ -180,7 +196,9 @@ def Scalar.decimal (cfg : Cfg) (j : Json) : Except ErrorKind PyDecimal :=
     if cfg.strict then .error (.isInstanceOf "Decimal") else
     match j with
     | .num (.int i) => .ok (.ofInt i)
-    | .num (.float d) => .ok (.ofRepr d)
+    | .num (.float d) => match PyDecimal.ofRepr d with
+      | some p => .ok p
+      | none => .error .finiteNumber
     | .num _ => .error .finiteNumber
     | .str s => str s
     | _ => .error .decimalType

@@ -105,6 +105,8 @@ Listed here with the reason, and in `docs/traceability.toml` with
   `float` tolerance in `multiple_of`, and huge literals keep their value
   (pydantic: `inf`). NaN and the infinities are `finite_number`. Plain
   `float` is `Float`, with pydantic's IEEE semantics.
+* `multiple_of` on a `PyDecimal` is exact; Python divides at 28 digits and
+  rejects any value whose quotient is wider (UP-055, pydantic#13970).
 * `PySet` dumps in input order (Python: hash order).
 * `pattern` rejects inline flags, `\p{..}`, POSIX classes and `\b{..}` at
   compile time; Rust accepts them.

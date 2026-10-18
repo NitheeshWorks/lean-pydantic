@@ -25,6 +25,12 @@ root = "tests.Props"
 name = "conformance"
 root = "tests.Conformance"
 
+# Hostile-size benches with bounds near pydantic-core's own times:
+# `lake exe bench`. Each prints its time and fails above its bound.
+[[lean_exe]]
+name = "bench"
+root = "tests.Bench"
+
 [[require]]
 name = "LeanJson"
 git = "https://github.com/NitheeshWorks/lean-json"

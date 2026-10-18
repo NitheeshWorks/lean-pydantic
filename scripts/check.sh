@@ -23,6 +23,9 @@ lake exe props
 echo "== conformance =="
 lake exe conformance
 
+echo "== benches =="
+lake exe bench
+
 echo "== traceability =="
 python3 scripts/traceability-check.py
 

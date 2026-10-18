@@ -202,7 +202,9 @@ ROWS += [
 DECIMAL_IN = ['1.5', '"1.5"', '123.456', '1234.5', '"abc"', '12345.6', '1e3', '0.001', '"NaN"', '"Infinity"',
               '"-inf"', '"snan"', 'true', 'null', '[1]', '"  2.50 "', '100', '1.10', '-0.0', '0.0', '"1_000"', '"1__0"',
               '"_1"', '0.00100', '"1e3"', '"1E-7"', '"-0.000"', '"+5."', '".5"', '"."', '"1e"', '1e-7', '1.5e-5', '1e16',
-              '123456789', '-12.5', '"00012.30"', '0.5', '9.5', '10.5', '10', '"7.25"', '"1.2e2"']
+              '123456789', '-12.5', '"00012.30"', '0.5', '9.5', '10.5', '10', '"7.25"', '"1.2e2"', '1e400', '1e999999999', '-1e309', '1.5e-400', '0e999999999',
+              '123456789012345678901234567890e5', '1e300', '"1e999999999"', '1e22', '0.1e-5']
+DECIMAL_WIDE_QUOTIENT = ['123456789012345678901234567890e5', '1e300', '"1e999999999"']
 # Python iterates a set in hash order; these inputs are already in that order
 SET_IN = ['[1,1,2]', '[1,2,3]', '[]', '[1]', '[0,1,2,3,4]', '5', '"ab"', '[1,"x",2]', '[1,"x",[]]', '{"a":1}', 'null',
           '["1","2"]', '[1.0,2]', '[true]']
@@ -232,7 +234,10 @@ ROWS += [
     ('decimal', DECIMAL_IN, PC + 'test_decimal.py::test_decimal'),
     ('condecimal_5_2', DECIMAL_IN, PC + 'test_decimal.py::test_decimal_digits'),
     ('condecimal_gt0_3', DECIMAL_IN, PC + 'test_decimal.py::test_decimal_kwargs'),
-    ('condecimal_places1_mult', DECIMAL_IN, PC + 'test_decimal.py::test_decimal_multiple_of'),
+    # multiple_of on a Decimal is exact here; Python's divides at 28 digits and
+    # rejects any quotient wider than that (UP-055), so these are left out
+    ('condecimal_places1_mult', [x for x in DECIMAL_IN if x not in DECIMAL_WIDE_QUOTIENT],
+     PC + 'test_decimal.py::test_decimal_multiple_of'),
 ]
 
 STRICT_ROWS = [

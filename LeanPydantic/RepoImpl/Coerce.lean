@@ -38,9 +38,31 @@ def trim (cs : List Char) : List Char :=
 
 def isDigit (c : Char) : Bool := '0' ≤ c && c ≤ '9'
 
+/-- The digits `ds[lo:hi]` as a number, split in halves so that a long run
+costs a few big multiplications (`O(M(n) log n)`), not `n` of them; the
+recursion is `log n` deep. -/
+def digitsValIn (ds : Array Char) (lo hi : Nat) : Nat :=
+  if h : hi - lo ≤ 32 then
+    (List.range (hi - lo)).foldl (fun a i => a * 10 + ((ds.getD (lo + i) '0').toNat - '0'.toNat)) 0
+  else
+    let mid := (lo + hi) / 2
+    digitsValIn ds lo mid * 10 ^ (hi - mid) + digitsValIn ds mid hi
+termination_by hi - lo
+
 /-- The value of a list of decimal digits. -/
 def digitsVal (cs : List Char) : Nat :=
-  cs.foldl (fun a c => a * 10 + (c.toNat - '0'.toNat)) 0
+  digitsValIn cs.toArray 0 cs.length
+
+
+/-- Whether the characters are a JSON integer literal, without converting. -/
+def isJsonInt (cs : List Char) : Bool :=
+  let ds := match cs with
+    | '-' :: r => r
+    | r => r
+  match ds with
+  | [] => false
+  | '0' :: _ :: _ => false
+  | ds => ds.all isDigit
 
 /-- A JSON integer literal, `-?(0|[1-9][0-9]*)`, and nothing else. -/
 def jsonInt? (cs : List Char) : Option Int :=
@@ -112,11 +134,22 @@ def maxIntLen : Nat := 4300
 /-- pydantic-core's `str_as_int`. -/
 def strAsInt (s : String) : Except ErrorKind Int :=
   let cs := s.toList
-  match jsonInt? cs with
-  | some i => if cs.length > maxIntLen then .error .intParsingSize else .ok i
-  | none =>
-    match cleanIntStr cs >>= jsonInt? with
-    | some i => .ok i
+  -- the length is checked before any digit is converted, so an over-long
+  -- string is rejected in linear time, as pydantic-core's number parser does
+  if isJsonInt cs then
+    if cs.length > maxIntLen then .error .intParsingSize
+    else match jsonInt? cs with
+      | some i => .ok i
+      | none => .error .intParsing
+  else
+    match cleanIntStr cs with
+    | some c =>
+      -- the cleaned string goes through the same parser; too long is
+      -- `int_parsing` there, as upstream
+      if c.length > maxIntLen then .error .intParsing
+      else match jsonInt? c with
+        | some i => .ok i
+        | none => .error .intParsing
     | none => .error .intParsing
 
 /-- Rust's `f64` grammar: `[+-]? (inf | infinity | nan | digits)`, where
