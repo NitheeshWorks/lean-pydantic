@@ -103,6 +103,8 @@ theorem field_required [FromJson α] [ToJson α] [JsonSchema α] (name : String)
 /-! ## The laws -/
 
 theorem nil_lawful : Fields.nil.Lawful where
+  lookups_eq := rfl
+  props_keys := rfl
   decode_encode _ _ _ _ _ := rfl
   encode_keys _ := rfl
   sound _ _ _ _ _ _ := ⟨by simp [nil, Schema.checkProps], fun _ h => nomatch h⟩
@@ -114,6 +116,12 @@ theorem nil_lawful : Fields.nil.Lawful where
 theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {name : String}
     {alias : Option String} {d : Option α} {rest : Fields β} (hfresh : alias.getD name ∉ rest.keys)
     (hr : rest.Lawful) : (field name alias d rest factory).Lawful where
+  lookups_eq := by
+    show [alias.getD name] :: rest.lookups = (alias.getD name :: rest.keys).map ([·])
+    rw [hr.lookups_eq]; rfl
+  props_keys := by
+    obtain ⟨t, df, hpr⟩ := field_props (factory := factory) name alias d rest
+    rw [hpr, field_keys, List.map_cons, hr.props_keys]
   decode_encode cfg j p kvs h := by
     obtain ⟨a, b⟩ := p
     rw [field_keys] at h
@@ -189,7 +197,7 @@ theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {
       · simp at he
   unset_subset o b hu ha p hp := by
     obtain ⟨a, b⟩ := b
-    simp only [field] at hp
+    simp only [field, Bool.false_and, Bool.false_eq_true, ite_false] at hp
     split at hp
     all_goals
       split at hp
@@ -199,6 +207,321 @@ theorem field_lawful [FromJson α] [ToJson α] [JsonSchema α] [LawfulJson α] {
           simp_all
         · exact hr.unset_subset o b hu ha p hp
       · exact hr.unset_subset o b hu ha p hp
+
+/-! ## The extra policy -/
+
+theorem lookupLast_isSome_iff {k : String} : ∀ {kvs : List (String × Json)},
+    (lookupLast k kvs).isSome = true ↔ k ∈ kvs.map Prod.fst
+  | [] => by simp [lookupLast]
+  | (k', v) :: kvs => by
+    have ih := lookupLast_isSome_iff (k := k) (kvs := kvs)
+    simp only [lookupLast, List.map_cons, List.mem_cons]
+    cases hw : lookupLast k kvs with
+    | some w =>
+      rw [hw] at ih
+      simp only [Option.isSome_some, true_iff] at ih ⊢
+      exact Or.inr ih
+    | none =>
+      rw [hw] at ih
+      simp only [Option.isSome_none, Bool.false_eq_true, false_iff] at ih
+      by_cases h : k' = k
+      · subst h; simp
+      · simp only [h, ite_false, Option.isSome_none, Bool.false_eq_true, false_iff, not_or]
+        exact ⟨fun e => h e.symm, ih⟩
+
+theorem lookupFirst_single (k : String) (kvs : List (String × Json)) :
+    lookupFirst [k] kvs = (lookupLast k kvs).map (k, ·) := by
+  simp only [lookupFirst]; cases lookupLast k kvs <;> rfl
+
+/-- Without `populate_by_name`, the fields read exactly their keys that the
+input has. -/
+theorem lookupFirst_single_fst (k : String) (kvs : List (String × Json)) :
+    (lookupFirst [k] kvs).map Prod.fst = (lookupLast k kvs).map (fun _ => k) := by
+  rw [lookupFirst_single, Option.map_map]; rfl
+
+theorem mem_consumed_iff {F : Fields β} (hl : F.Lawful) (kvs : List (String × Json)) (k : String) :
+    k ∈ F.consumed kvs ↔ k ∈ F.keys ∧ k ∈ kvs.map Prod.fst := by
+  rw [← lookupLast_isSome_iff]
+  simp only [consumed, hl.lookups_eq, List.mem_filterMap, List.mem_map]
+  constructor
+  · rintro ⟨_, ⟨k', hk', rfl⟩, h⟩
+    rw [lookupFirst_single_fst] at h
+    cases hv : lookupLast k' kvs with
+    | none => rw [hv] at h; cases h
+    | some v => rw [hv] at h; cases h; exact ⟨hk', by rw [hv]; rfl⟩
+  · rintro ⟨hk, hm⟩
+    refine ⟨[k], ⟨k, hk, rfl⟩, ?_⟩
+    rw [lookupFirst_single_fst]
+    cases hv : lookupLast k kvs with
+    | none => rw [hv] at hm; cases hm
+    | some v => rfl
+
+theorem extras_eq_nil_iff (F : Fields β) (mode : InputMode) (kvs : List (String × Json)) :
+    F.extras mode kvs = [] ↔ ∀ p ∈ kvs, p.1 ∈ F.accepted mode kvs := by
+  simp [extras, List.filter_eq_nil_iff]
+
+theorem forbidExtras_ok_iff (cfg : Cfg) (F : Fields β) (kvs : List (String × Json)) :
+    forbidExtras cfg F kvs = .ok () ↔ F.extras cfg.mode kvs = [] := by
+  unfold forbidExtras; split <;> simp_all
+
+theorem forbidExtras_error (cfg : Cfg) (F : Fields β) (kvs : List (String × Json)) (es : List ErrorDetails)
+    (h : forbidExtras cfg F kvs = .error es) :
+    es ≠ [] ∧ ∀ e ∈ es, ∃ kv ∈ kvs, e.loc = [.key kv.1] := by
+  unfold forbidExtras at h
+  cases hx : F.extras cfg.mode kvs with
+  | nil => rw [hx] at h; cases h
+  | cons x xs =>
+    rw [hx] at h
+    cases h
+    refine ⟨by simp, fun e he => ?_⟩
+    obtain ⟨kv, hkv, rfl⟩ := List.mem_map.1 he
+    rw [← hx] at hkv
+    exact ⟨kv, (List.mem_filter.1 hkv).1, rfl⟩
+
+/-- **`extra='forbid'`**: a model validates an object exactly when it has no
+extras (`accepted`: the keys its fields read from Python objects; every
+field key and name from JSON text) and every field validates. -/
+theorem validate_forbid_iff (title : String) (F : Fields β) (back : β → α) (cfg : Cfg)
+    (kvs : List (String × Json)) (a : α) :
+    validate title .forbid F back cfg (.obj ⟨kvs⟩) = .ok a ↔
+      (∀ p ∈ kvs, p.1 ∈ F.accepted cfg.mode kvs) ∧ ∃ b, F.decode cfg (.obj ⟨kvs⟩) kvs = .ok b ∧ back b = a := by
+  rw [← extras_eq_nil_iff, ← forbidExtras_ok_iff]
+  simp only [validate]
+  cases cfg.mode with
+  | python =>
+    constructor
+    · intro h
+      cases hb : Keel.Validator.both (F.decode cfg (.obj ⟨kvs⟩)) (forbidExtras cfg F) kvs with
+      | error e => rw [hb] at h; cases h
+      | ok p =>
+        rw [hb] at h
+        obtain ⟨b, u⟩ := p
+        obtain ⟨hd, hf⟩ := (Keel.Validator.both_ok_iff _ _ _ _ _).1 hb
+        simp only [Except.map, Except.ok.injEq] at h
+        exact ⟨hf, b, hd, h⟩
+    · rintro ⟨hf, b, hd, rfl⟩
+      rw [(Keel.Validator.both_ok_iff _ _ _ b ()).2 ⟨hd, hf⟩]; rfl
+  | json =>
+    constructor
+    · intro h
+      cases hb : Keel.Validator.both (forbidExtras cfg F) (F.decode cfg (.obj ⟨kvs⟩)) kvs with
+      | error e => rw [hb] at h; cases h
+      | ok p =>
+        rw [hb] at h
+        obtain ⟨u, b⟩ := p
+        obtain ⟨hf, hd⟩ := (Keel.Validator.both_ok_iff _ _ _ _ _).1 hb
+        simp only [Except.map, Except.ok.injEq] at h
+        exact ⟨hf, b, hd, h⟩
+    · rintro ⟨hf, b, hd, rfl⟩
+      rw [(Keel.Validator.both_ok_iff _ _ _ () b).2 ⟨hf, hd⟩]; rfl
+
+/-- Without `populate_by_name`, a member is accepted exactly when its key is
+one of `acceptedNames`. -/
+theorem mem_accepted_iff {F : Fields β} (hl : F.Lawful) (mode : InputMode) (kvs : List (String × Json))
+    (k : String) (hk : k ∈ kvs.map Prod.fst) : k ∈ F.accepted mode kvs ↔ k ∈ F.acceptedNames mode := by
+  cases mode with
+  | python => simp only [accepted, acceptedNames, mem_consumed_iff hl, hk, and_true]
+  | json => rfl
+
+/-- `extra='forbid'` without `populate_by_name`: a model validates an object
+exactly when every member's key is accepted (a field's key; from JSON text,
+also a field's name) and every field validates. -/
+theorem validate_forbid_keys_iff {title : String} {F : Fields β} {back : β → α} (hl : F.Lawful) (cfg : Cfg)
+    (kvs : List (String × Json)) (a : α) :
+    validate title .forbid F back cfg (.obj ⟨kvs⟩) = .ok a ↔
+      (∀ p ∈ kvs, p.1 ∈ F.acceptedNames cfg.mode) ∧
+        ∃ b, F.decode cfg (.obj ⟨kvs⟩) kvs = .ok b ∧ back b = a := by
+  rw [validate_forbid_iff]
+  have : (∀ p ∈ kvs, p.1 ∈ F.accepted cfg.mode kvs) ↔ ∀ p ∈ kvs, p.1 ∈ F.acceptedNames cfg.mode :=
+    ⟨fun h p hp => (mem_accepted_iff hl _ kvs p.1 (List.mem_map_of_mem hp)).1 (h p hp),
+     fun h p hp => (mem_accepted_iff hl _ kvs p.1 (List.mem_map_of_mem hp)).2 (h p hp)⟩
+  rw [this]
+
+theorem keys_sub_acceptedNames (F : Fields β) (mode : InputMode) (k : String) (h : k ∈ F.keys) :
+    k ∈ F.acceptedNames mode := by
+  cases mode with
+  | python => exact h
+  | json => exact List.mem_append_left _ h
+
+theorem dump_roundTrip (extra : Extra) (F : Fields β) (into : α → β) (a : α) :
+    dump extra F into DumpOpts.roundTrip a = .obj ⟨F.encode DumpOpts.roundTrip (into a)⟩ := by
+  simp [dump, extraDump, DumpOpts.roundTrip]
+
+/-- Validating a default dump gives the value back, under every policy. -/
+theorem validate_encode {title : String} {extra : Extra} {F : Fields β} {back : β → α} {into : α → β}
+    (hl : F.Lawful) (hb : ∀ a, back (into a) = a) (cfg : Cfg) (a : α) :
+    validate title extra F back cfg (.obj ⟨F.encode DumpOpts.roundTrip (into a)⟩) = .ok a := by
+  have hdec := hl.decode_encode cfg (.obj ⟨F.encode DumpOpts.roundTrip (into a)⟩) (into a) _ (fun _ _ => rfl)
+  cases extra with
+  | forbid =>
+    refine (validate_forbid_keys_iff hl cfg _ a).2 ⟨fun p hp => ?_, into a, hdec, hb a⟩
+    apply keys_sub_acceptedNames
+    rw [← hl.encode_keys (into a)]
+    exact List.mem_map_of_mem hp
+  | ignore | allow => simp [validate, hdec, Except.map, hb]
+
+/-- What strict validation accepts conforms to the model's schema, under
+every policy (`additionalProperties: false` under `forbid`), provided under
+`forbid` that every field name is a key: pydantic's JSON validation accepts
+(and drops) an aliased field's name, which its schema forbids. -/
+theorem validate_sound {title : String} {extra : Extra} {F : Fields β} {back : β → α} (hl : F.Lawful)
+    (hn : extra = .forbid → ∀ n ∈ F.names, n ∈ F.keys)
+    (cfg : Cfg) (j : Json) (a : α) (hs : cfg.strict = true) (h : validate title extra F back cfg j = .ok a) :
+    Schema.check (schema title extra F) j = true := by
+  rcases j with _ | _ | _ | _ | _ | ⟨⟨kvs⟩⟩
+  all_goals try (simp [validate] at h; done)
+  obtain ⟨b, hd, hx⟩ : ∃ b, F.decode cfg (.obj ⟨kvs⟩) kvs = .ok b ∧
+      (extra = .forbid → ∀ p ∈ kvs, p.1 ∈ F.keys) := by
+    cases extra with
+    | forbid =>
+      obtain ⟨hk, b, hd, -⟩ := (validate_forbid_keys_iff hl cfg kvs a).1 h
+      refine ⟨b, hd, fun _ p hp => ?_⟩
+      have := hk p hp
+      cases hm : cfg.mode with
+      | python => rw [hm] at this; exact this
+      | json =>
+        rw [hm] at this
+        rcases List.mem_append.1 this with h' | h'
+        · exact h'
+        · exact hn rfl _ h'
+    | ignore | allow =>
+      simp only [validate] at h
+      cases hd : F.decode cfg (.obj ⟨kvs⟩) kvs with
+      | error e => rw [hd] at h; cases h
+      | ok b => exact ⟨b, rfl, nofun⟩
+  obtain ⟨hp, hr⟩ := hl.sound cfg _ kvs b hs hd
+  simp only [schema, Schema.check, hp, Bool.true_and, Bool.and_eq_true, List.all_eq_true, Bool.or_eq_true,
+    bne_iff_ne, ne_eq]
+  refine ⟨hr, ?_⟩
+  by_cases hf : extra = .forbid
+  · right
+    intro kv hkv
+    have hk := hx hf kv hkv
+    rw [← hl.props_keys] at hk
+    obtain ⟨q, hq, he⟩ := List.mem_map.1 hk
+    exact List.any_eq_true.2 ⟨q, hq, by simp [he]⟩
+  · exact Or.inl hf
+
+/-- A failed validation names at least one error, under every policy. -/
+theorem validate_ne_nil {title : String} {extra : Extra} {F : Fields β} {back : β → α} (hl : F.Lawful)
+    (cfg : Cfg) (j : Json) : validate title extra F back cfg j ≠ .error [] := by
+  rcases j with _ | _ | _ | _ | _ | ⟨⟨kvs⟩⟩
+  all_goals try (simp [validate]; done)
+  have hne := hl.ne_nil cfg (.obj ⟨kvs⟩) kvs
+  cases extra with
+  | forbid =>
+    simp only [validate]
+    cases cfg.mode <;>
+    cases hd : F.decode cfg (.obj ⟨kvs⟩) kvs <;> cases hf : forbidExtras cfg F kvs <;>
+      simp_all [Keel.Validator.both, Except.map] <;> simp_all [forbidExtras_error cfg F kvs _ hf]
+  | ignore | allow =>
+    simp only [validate]
+    cases hd : F.decode cfg (.obj ⟨kvs⟩) kvs <;> simp_all [Except.map]
+
+/-- Every error of a model on an object is under one of its fields' keys,
+or, under `forbid`, under one of the input's keys. -/
+theorem validate_loc {title : String} {extra : Extra} {F : Fields β} {back : β → α} (hl : F.Lawful)
+    (cfg : Cfg) (kvs : List (String × Json)) (es : List ErrorDetails)
+    (h : validate title extra F back cfg (.obj ⟨kvs⟩) = .error es) :
+    ∀ e ∈ es, ∃ k, (k ∈ F.keys ∨ (extra = .forbid ∧ k ∈ kvs.map Prod.fst)) ∧ ∃ l, e.loc = .key k :: l := by
+  have field_errs : ∀ es', F.decode cfg (.obj ⟨kvs⟩) kvs = .error es' → ∀ e ∈ es',
+      ∃ k, (k ∈ F.keys ∨ (extra = .forbid ∧ k ∈ kvs.map Prod.fst)) ∧ ∃ l, e.loc = .key k :: l := by
+    intro es' hd e he
+    obtain ⟨k, hk, l, hl'⟩ := hl.loc_key cfg _ kvs es' hd e he
+    exact ⟨k, Or.inl hk, l, hl'⟩
+  have extra_errs : extra = .forbid → ∀ es', forbidExtras cfg F kvs = .error es' → ∀ e ∈ es',
+      ∃ k, (k ∈ F.keys ∨ (extra = .forbid ∧ k ∈ kvs.map Prod.fst)) ∧ ∃ l, e.loc = .key k :: l := by
+    intro hx es' hf e he
+    obtain ⟨kv, hkv, hloc⟩ := (forbidExtras_error cfg F kvs es' hf).2 e he
+    exact ⟨kv.1, Or.inr ⟨hx, List.mem_map_of_mem hkv⟩, [], hloc⟩
+  cases extra with
+  | forbid =>
+    simp only [validate] at h
+    cases hm : cfg.mode with
+    | python =>
+      rw [hm] at h
+      cases hb : Keel.Validator.both (F.decode cfg (.obj ⟨kvs⟩)) (forbidExtras cfg F) kvs with
+      | ok p => rw [hb] at h; cases h
+      | error es' =>
+        rw [hb] at h; cases h
+        have hes := Keel.Validator.both_error _ _ _ _ hb
+        intro e he
+        rw [hes, List.mem_append] at he
+        rcases he with he | he
+        · split at he
+          · rename_i es'' hd; exact field_errs es'' hd e he
+          · simp at he
+        · split at he
+          · rename_i es'' hf; exact extra_errs rfl es'' hf e he
+          · simp at he
+    | json =>
+      rw [hm] at h
+      cases hb : Keel.Validator.both (forbidExtras cfg F) (F.decode cfg (.obj ⟨kvs⟩)) kvs with
+      | ok p => rw [hb] at h; cases h
+      | error es' =>
+        rw [hb] at h; cases h
+        have hes := Keel.Validator.both_error _ _ _ _ hb
+        intro e he
+        rw [hes, List.mem_append] at he
+        rcases he with he | he
+        · split at he
+          · rename_i es'' hf; exact extra_errs rfl es'' hf e he
+          · simp at he
+        · split at he
+          · rename_i es'' hd; exact field_errs es'' hd e he
+          · simp at he
+  | ignore | allow =>
+    simp only [validate] at h
+    cases hd : F.decode cfg (.obj ⟨kvs⟩) kvs with
+    | ok b => rw [hd] at h; cases h
+    | error es' =>
+      rw [hd] at h
+      simp only [Except.map, Except.error.injEq] at h
+      subst h
+      exact field_errs _ hd
+
+theorem dictInsert_key {γ : Type} (k : String) (v : γ) :
+    ∀ (acc : List (String × γ)) (p : String × γ), p ∈ dictInsert k v acc → p.1 = k ∨ p.1 ∈ acc.map Prod.fst
+  | [], p, h => by simp [dictInsert] at h; exact Or.inl (by rw [h])
+  | (k', v') :: acc, p, h => by
+    simp only [dictInsert] at h
+    split at h
+    · rcases List.mem_cons.1 h with rfl | h
+      · exact Or.inl rfl
+      · exact Or.inr (List.mem_map_of_mem (List.mem_cons_of_mem _ h))
+    · rcases List.mem_cons.1 h with rfl | h
+      · exact Or.inr (by simp)
+      · rcases dictInsert_key k v acc p h with h | h
+        · exact Or.inl h
+        · exact Or.inr (by simp only [List.map_cons, List.mem_cons]; exact Or.inr h)
+
+theorem dedup_key {γ : Type} :
+    ∀ (l acc : List (String × γ)) (p : String × γ),
+      p ∈ l.foldl (fun acc kv => dictInsert kv.1 kv.2 acc) acc → p.1 ∈ acc.map Prod.fst ∨ p.1 ∈ l.map Prod.fst
+  | [], acc, p, h => Or.inl (List.mem_map_of_mem h)
+  | kv :: l, acc, p, h => by
+    rcases dedup_key l _ p h with h | h
+    · obtain ⟨q, hq, he⟩ := List.mem_map.1 h
+      rcases dictInsert_key kv.1 kv.2 acc q hq with h' | h'
+      · exact Or.inr (by simp only [List.map_cons, List.mem_cons]; exact Or.inl (he ▸ h'))
+      · exact Or.inl (he ▸ h')
+    · exact Or.inr (by simp only [List.map_cons, List.mem_cons]; exact Or.inr h)
+
+/-- An extra a dump writes was set in the input it came from. -/
+theorem extraDump_wasSet (F : Fields β) (o : DumpOpts) : ∀ p ∈ F.extraDump o, wasSet o.set_from p.1 = true := by
+  intro p hp
+  unfold extraDump at hp
+  split at hp
+  · rename_i kvs hs
+    rw [hs]
+    have hm := (List.mem_filter.1 hp).1
+    rcases dedup_key _ [] p hm with h | h
+    · simp at h
+    · obtain ⟨q, hq, he⟩ := List.mem_map.1 h
+      have hq' := (List.mem_filter.1 hq).1
+      simp only [wasSet]
+      exact lookupLast_isSome_iff.2 (he ▸ List.mem_map_of_mem hq')
+  · simp at hp
 
 end Fields
 

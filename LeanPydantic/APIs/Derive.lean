@@ -20,7 +20,21 @@ the handler lists the fields and nothing more:
   `Fields.field "name" none (Fields.field "description" (some none) (…Fields.nil))`
   and whose `lawful` proof is the matching chain of `Fields.field_lawful`
   applications, each freshness side condition closed by `decide`;
-* the per-model theorems `Item.fromJson_toJson` and `Item.schema_sound`, both
+* Settings go where pydantic puts them, in a `model_config` member:
+
+```
+structure FormData where
+  username : String
+  password : String
+  model_config : ConfigDict (extra := .forbid) := {}
+  deriving Model
+```
+
+`ConfigDict` holds nothing (its value is always `{}`); the handler reads
+`extra` and `populate_by_name` from its type. It is not a field of the
+model: not validated, dumped or in the schema.
+
+the per-model theorems `Item.fromJson_toJson` and `Item.schema_sound`, both
   instances of the generic laws (`LawfulJson`);
 * pydantic's method names in the model's namespace: `Item.model_validate`,
   `Item.model_validate_json`, `Item.model_json_schema`, `item.model_dump`,
@@ -39,6 +53,15 @@ namespace LeanPydantic
 `item_id: int = Field(alias='itemId')`. It is `Int` itself (an `abbrev`), so
 the field is used as an `Int`; only `deriving Model` reads the alias. -/
 abbrev Alias (_alias : String) (α : Type) : Type := α
+
+/-- pydantic's `model_config = ConfigDict(extra=…, populate_by_name=…)`, as a
+structure member `model_config : ConfigDict (extra := .forbid) := {}`.
+`extra` is what validation does with members no field reads (`.ignore`, the
+default; `.forbid`; `.allow`); `populate_by_name` lets a field with an alias
+also be read by its name. The type holds no data, so a structure with this
+member is still determined by its fields. -/
+structure ConfigDict (extra : Extra := .ignore) (populate_by_name : Bool := false) : Type where
+  deriving DecidableEq, Repr, Inhabited, Hashable
 
 /-- A field whose default is pydantic's `Field(default_factory=…)`: the
 structure's default (`tags : Factory (List String) := []`), made afresh for
@@ -59,6 +82,19 @@ def aliasOf? (ty : Expr) : Option String :=
     | .lit (.strVal s) => some s
     | _ => none
   else none
+
+/-- The settings of a `ConfigDict e p` member type: `extra` and
+`populate_by_name`, if they are written out as constructors. -/
+def configOf? (ty : Expr) : MetaM (Option (Option (Name × Bool))) := do
+  if !ty.isAppOfArity ``LeanPydantic.ConfigDict 2 then return none
+  let e ← whnf ty.appFn!.appArg!
+  let p ← whnf ty.appArg!
+  match e.constName?, p.constName? with
+  | some en, some pn =>
+    if pn == ``Bool.true then return some (some (en, true))
+    else if pn == ``Bool.false then return some (some (en, false))
+    else return some none
+  | _, _ => return some none
 
 /-- Whether a field type is `Factory T`, possibly under `Alias`. -/
 def isFactory (ty : Expr) : Bool :=
@@ -115,11 +151,29 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
       throwError "deriving Model: `{declName}` extends another structure, which is not supported yet"
   let tyId := mkIdent (`_root_ ++ declName)
   let title := Syntax.mkStrLit (declName.componentsRev.head!.toString)
-  let fieldTypes ← liftTermElabM <| forallTelescope ctorVal.type fun xs _ => xs.mapM (fun x => inferType x)
+  let allTypes ← liftTermElabM <| forallTelescope ctorVal.type fun xs _ => xs.mapM (fun x => inferType x)
+  -- a `model_config : ConfigDict …` member: the settings, and not a field
+  let configs ← liftTermElabM <| allTypes.mapM fun t => configOf? t
+  let mut extra : Name := ``LeanPydantic.Extra.ignore
+  let mut populate := false
+  for (f, c) in fields.zip configs do
+    match c with
+    | some (some (e, p)) =>
+      unless f == `model_config do
+        throwError "deriving Model: a `ConfigDict` member must be named `model_config`, not `{f}`"
+      extra := e
+      populate := p
+    | some none => throwError "deriving Model: write `model_config`'s settings as constants, e.g. `ConfigDict (extra := .forbid)`"
+    | none => pure ()
+  let isConfig : Array Bool := configs.map Option.isSome
+  let modelFields := ((fields.zip allTypes).zip isConfig).filterMap fun ((f, t), c) => if c then none else some (f, t)
+  let fieldTypes := modelFields.map (·.2)
   -- the field chain and its lawfulness proof, built from the last field back
   let mut fieldsStx ← `(LeanPydantic.Fields.nil)
   let mut lawStx ← `(LeanPydantic.Fields.nil_lawful)
-  for (f, fty) in (fields.zip fieldTypes).reverse do
+  let mut byNameAny := false
+  let mut aliasAny := false
+  for (f, fty) in modelFields.reverse do
     let nameLit := Syntax.mkStrLit f.toString
     let aliasStx ← match aliasOf? fty with
       | some a => `(some $(Syntax.mkStrLit a))
@@ -136,31 +190,46 @@ def mkModelCmds (declName : Name) : CommandElabM Unit := do
         `(some $(mkIdent (`_root_ ++ d)))
       | none => `(none)
     let factoryStx ← if isFactory fty then `(true) else `(false)
-    fieldsStx ← `(LeanPydantic.Fields.field $nameLit $aliasStx $dflt $fieldsStx $factoryStx)
+    if (aliasOf? fty).any (· != f.toString) then aliasAny := true
+    let byName := populate && (aliasOf? fty).isSome
+    if byName then byNameAny := true
+    let byNameStx ← if byName then `(true) else `(false)
+    fieldsStx ← `(LeanPydantic.Fields.field $nameLit $aliasStx $dflt $fieldsStx $factoryStx $byNameStx)
     lawStx ← `(LeanPydantic.Fields.field_lawful (by decide) $lawStx)
   -- into: the tuple of fields; back: the constructor applied to its parts
   let x := mkIdent `x
   let p := mkIdent `p
   let mut tuple ← `(())
-  for f in fields.reverse do
+  for (f, _) in modelFields.reverse do
     tuple ← `(($(mkIdent (`_root_ ++ declName ++ f)) $x, $tuple))
-  let parts ← (List.range fields.size).toArray.mapM (projAt p)
+  -- the constructor's arguments: the parts of the tuple, and `{}` for `model_config`
+  let mut parts : Array Term := #[]
+  let mut i := 0
+  for c in isConfig do
+    if c then parts := parts.push (← `(LeanPydantic.ConfigDict.mk))
+    else
+      parts := parts.push (← projAt p i)
+      i := i + 1
   let ctor := mkIdent (`_root_ ++ ctorVal.name)
   let n := declName
+  let extraStx := mkIdent extra
   elabCommand (← `(command|
     instance : LeanPydantic.Model $tyId where
       title := $title
       fields := $fieldsStx
       into := fun ($x : $tyId) => $tuple
       back := fun $p => $ctor $parts*
-      back_into := fun _ => rfl))
-  -- the laws, when every field type has them (a `Float` field has none)
-  let lawful ← liftTermElabM <| fieldTypes.allM fun fty => do
-    let inst ← mkAppM ``LeanPydantic.LawfulJson #[fty]
+      back_into := fun _ => rfl
+      extra := $extraStx))
+  -- the laws, when every field type has them (a `Float` field has none) and
+  -- no field is also read by its name (pydantic's schema lists only the alias,
+  -- so a value read by name would not conform to it)
+  let lawful ← if byNameAny || (extra == ``LeanPydantic.Extra.forbid && aliasAny) then pure false else liftTermElabM <| fieldTypes.allM fun fty => do
+    let inst ← mkAppOptM ``LeanPydantic.LawfulJson #[some fty, none, none, none]
     return (← trySynthInstance inst) matches .some _
   if lawful then
     elabCommand (← `(command|
-      instance : LeanPydantic.LawfulModel $tyId := ⟨$lawStx⟩))
+      instance : LeanPydantic.LawfulModel $tyId := ⟨$lawStx, by decide⟩))
     elabCommand (← `(command|
       /-- Validating a dump by alias gives the model back (an instance of `LawfulJson`). -/
       theorem $(mkIdent (`_root_ ++ n ++ `fromJson_toJson)) (cfg : LeanPydantic.Cfg) (a : $tyId) :

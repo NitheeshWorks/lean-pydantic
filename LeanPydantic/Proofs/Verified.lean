@@ -75,9 +75,18 @@ structure VerifiedModel : Prop where
   /-- Dumps conform to the schema. -/
   dumpConforms : ∀ (α : Type) [Model α] [LawfulModel α] (a : α),
     Conforms (JsonSchema.schema α) (Model.model_dump a (by_alias := true))
-  /-- Every error of an object's validation is located under a field. -/
+  /-- Every error of an object's validation is located under a field, or,
+  under `extra='forbid'`, under one of the input's keys. -/
   locPrefix : ∀ (α : Type) [m : Model α] [LawfulModel α] (cfg : Cfg) (kvs : List (String × Json)) es,
-    fromJson (α := α) cfg (.obj ⟨kvs⟩) = .error es → ∀ e ∈ es, ∃ k ∈ m.fields.keys, ∃ l, e.loc = .key k :: l
+    fromJson (α := α) cfg (.obj ⟨kvs⟩) = .error es → ∀ e ∈ es,
+      ∃ k, (k ∈ m.fields.keys ∨ (m.extra = .forbid ∧ k ∈ kvs.map Prod.fst)) ∧ ∃ l, e.loc = .key k :: l
+  /-- `extra='forbid'`: an object validates exactly when every member's key
+  is accepted (a field's key; from JSON text, also a field's name) and every
+  field validates. -/
+  forbidIff : ∀ (α : Type) [m : Model α] [LawfulModel α], m.extra = .forbid → ∀ (cfg : Cfg)
+    (kvs : List (String × Json)) (a : α), fromJson cfg (.obj ⟨kvs⟩) = .ok a ↔
+      (∀ p ∈ kvs, p.1 ∈ m.fields.acceptedNames cfg.mode) ∧
+        ∃ b, m.fields.decode cfg (.obj ⟨kvs⟩) kvs = .ok b ∧ m.back b = a
 
 /-- `pattern`: the matcher, its correctness and its bound. -/
 structure VerifiedRegex : Prop where
@@ -159,6 +168,7 @@ theorem theVerifiedModel : VerifiedModel where
   schemaSound _ _ _ _ _ h := Model.schema_sound h
   dumpConforms _ _ _ a := Model.model_dump_conforms a
   locPrefix _ _ _ cfg kvs es h := Model.validate_loc_prefix cfg kvs es h
+  forbidIff _ _ _ hx cfg kvs a := Model.validate_forbid_iff hx cfg kvs a
 
 theorem theVerifiedSurface : VerifiedSurface where
   listLawful _ _ _ _ _ := inferInstance

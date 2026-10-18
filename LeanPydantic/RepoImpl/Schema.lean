@@ -141,7 +141,11 @@ def members : Schema → List (String × Json)
       | some t => [("type", .str t)]
       | none => [])
   | .anyOf alts => [("anyOf", .arr ⟨toJsonList alts⟩)]
-  | .object title props required =>
+  | .object title props required extra =>
+    (match extra with
+      | .ignore => []
+      | .forbid => [("additionalProperties", .bool false)]
+      | .allow => [("additionalProperties", .bool true)]) ++
     [("properties", .obj ⟨toJsonProps props⟩)] ++
     (if required = [] then [] else [("required", .arr ⟨required.map .str⟩)]) ++
     [("title", .str title), ("type", .str "object")]
@@ -170,7 +174,7 @@ def defs : Schema → List (String × Schema)
   | .tuple ps => defsList ps
   | .dict v => defs v
   | .anyOf alts => defsList alts
-  | .object _ props _ => defsProps props
+  | .object _ props _ _ => defsProps props
   | .ref name target => (name, target) :: defs target
   | .annotated s _ _ => defs s
   | _ => []
@@ -236,9 +240,11 @@ def check : Schema → Json → Bool
     | _ => false
   | .literal vs, j => decide (j ∈ vs)
   | .anyOf alts, j => checkAny alts j
-  | .object _ props required, j =>
+  | .object _ props required extra, j =>
     match j with
-    | .obj ⟨kvs⟩ => checkProps props kvs && required.all (fun r => (LeanJson.Json.lookupLast r kvs).isSome)
+    | .obj ⟨kvs⟩ =>
+      checkProps props kvs && required.all (fun r => (LeanJson.Json.lookupLast r kvs).isSome) &&
+        (extra != .forbid || kvs.all fun kv => props.any (·.1 == kv.1))
     | _ => false
   | .ref _ target, j => check target j
   | .annotated s _ _, j => check s j

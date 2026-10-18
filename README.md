@@ -72,6 +72,8 @@ and so is `User.model_json_schema`.
 | `Union[int, str]` (smart mode) | `Int ⊕ String` |
 | `Literal['a', 'b']`, `class Color(str, Enum)` | `String ∣ oneOf ["a", "b"]`, `inductive Color … deriving Model` |
 | `item_id: int = Field(alias='itemId')` | `item_id : Alias "itemId" Int` |
+| `model_config = ConfigDict(extra='forbid', populate_by_name=True)` | `model_config : ConfigDict (extra := .forbid) (populate_by_name := true) := {}` |
+| `item.model_extra` (under `extra='allow'`) | `item.model_extra` (`Option Json`) |
 | `tags: list[str] = Field(default_factory=list)` | `tags : Factory (List String) := []` |
 | `Field(pattern=r'^\d+$')` | `String ∣ pattern "^\\d+$"` (compiled, and checked, at compile time) |
 | `Annotated[int, AfterValidator(f)]` (also `Before`, `Wrap`) | `After Int f`, `Before Int f`, `Wrap Int f` |
@@ -121,7 +123,11 @@ checks they use only Lean's three axioms).
   pydantic-core template rendered from its `ctx`:
   `e.msg = render e.ctx (template e.mode e.type)` (`error_type_ctx_coherent`).
 * **Errors are located.** Every error of a model's validation sits under one
-  of its fields (`Model.validate_loc_prefix`), by Keel's `Validator.at`.
+  of its fields, or under `extra='forbid'` one of the input's keys
+  (`Model.validate_loc_prefix`), by Keel's `Validator.at`.
+* **Forbid means exactly the accepted keys.** Under `extra='forbid'`,
+  validation succeeds iff every input key is accepted and the fields decode
+  (`Model.validate_forbid_iff`).
 * **Exact numbers.** Bounds compare exact decimals at any common exponent
   (`Num.rel_at`, `Num.rel_denotes`).
 * **Containers and choices are lawful.** `List`, `Dict`, tuples, literals and

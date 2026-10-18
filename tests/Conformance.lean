@@ -68,6 +68,45 @@ structure E2 where
   d : Dict Int
   deriving Model
 
+/-! `model_config`: `extra` and `populate_by_name`, as the generator's
+`ExtraForbid`, `ExtraAllow`, `ExtraPop`, `ExtraNested`, `ExtraAliasAllow`, and
+FastAPI's `request_form_models` tutorial 002 `FormData`. -/
+structure ExtraForbid where
+  model_config : ConfigDict (extra := .forbid) := {}
+  a : Int
+  b : Alias "B" String
+  deriving Model
+
+structure ExtraAllow where
+  model_config : ConfigDict (extra := .allow) := {}
+  a : Int
+  b : Alias "B" String := "x"
+  deriving Model
+
+structure ExtraPop where
+  model_config : ConfigDict (extra := .forbid) (populate_by_name := true) := {}
+  a : Int
+  b : Alias "B" String
+  deriving Model
+
+structure ExtraNested where
+  model_config : ConfigDict (extra := .forbid) := {}
+  inner : ExtraAllow
+  f : Option ExtraForbid := none
+  deriving Model
+
+structure ExtraAliasAllow where
+  model_config : ConfigDict (extra := .allow) := {}
+  a : Alias "alias_a" String := "default"
+  b : Alias "alias_b" String := "default"
+  deriving Model
+
+structure FormData where
+  username : String
+  password : String
+  model_config : ConfigDict (extra := .forbid) := {}
+  deriving Model
+
 /-! Validators and serializers: pydantic's model
 ```
 class M(BaseModel):
@@ -120,13 +159,13 @@ def runAs (α : Type) [FromJson α] [ToJson α] [JsonSchema α] (mode : String)
     (strict : Bool) (input : String) : String :=
   if mode = "json" then
     match validateJsonWith α strict input with
-    | .ok a => LeanJson.printStr (toJson {} a.val)
+    | .ok a => LeanJson.printStr (toJson { set_from := some a.input, set_mode := .json } a.val)
     | .error e => e.json
   else
     match LeanJson.from_json input with
     | .ok j =>
       match validateWith α { strict, from_attributes := mode = "python-attrs" } j.val with
-      | .ok a => LeanJson.printStr (toJson {} a.val)
+      | .ok a => LeanJson.printStr (toJson { set_from := some j.val } a.val)
       | .error e => e.json
     | .error _ => "<input is not JSON>"
 
@@ -178,6 +217,12 @@ def dispatch (tag : String) : Option ((String → Bool → String → String) ×
   | "condecimal_5_2" => r (Condecimal (some 5) (some 2))
   | "condecimal_gt0_3" => r (Condecimal (some 3) none ∣ gt 0)
   | "condecimal_places1_mult" => r (Condecimal none (some 1) ∣ multipleOf 0.5 ∧ le 10)
+  | "extra_forbid" => r ExtraForbid
+  | "extra_allow" => r ExtraAllow
+  | "extra_pop" => r ExtraPop
+  | "extra_nested" => r ExtraNested
+  | "extra_alias_allow" => r ExtraAliasAllow
+  | "form_data" => r FormData
   | _ => none
 
 /-- Validate `input`, then `model_dump_json` it with the given options and
@@ -198,6 +243,9 @@ def dispatchDump (tag : String) : Option (String → Bool × Bool × Bool × Boo
   match tag with
   | "shop" => some (dumpAs Shop)
   | "offer" => some (dumpAs Offer)
+  | "extra_allow" => some (dumpAs ExtraAllow)
+  | "extra_nested" => some (dumpAs ExtraNested)
+  | "extra_alias_allow" => some (dumpAs ExtraAliasAllow)
   | _ => none
 
 structure Case where
@@ -246,8 +294,49 @@ def functionalCases : List Case :=
         | .ok m => m.val.model_dump_json
         | .error e => e.json) }
 
+/-- `model_extra`, `model_fields_set` and `model_dump()` of a validated
+`extra='allow'` model, as text. -/
+def extraReport {cfg obj} (v : Valid ExtraAllow cfg obj) : String :=
+  s!"{(v.model_extra.map LeanJson.printStr)} {v.model_fields_set} {LeanJson.printStr v.model_dump}"
+
 /-- Cases written out by hand, for behaviour the table does not reach. -/
 def handCases : List Case := [
+  { upstream := "pydantic/tests/test_main.py::test_allow_extra"
+    name := "extra='allow': model_extra, model_fields_set and model_dump (a dict) by input mode"
+    run := do
+      -- pydantic: Python input {'z': 1, 'b': 'q'}, {'a', 'z', 'b'}, {'a': 1, 'b': 'q', 'z': 1};
+      -- JSON text drops the field name 'b': {'z': 1}, {'a', 'z'}, {'a': 1, 'b': 'x', 'z': 1}
+      let py := match ExtraAllow.model_validate (json% {"z": 1, "a": 1, "b": "q"}) with
+        | .ok v => extraReport v
+        | .error e => e.json
+      let js := match ExtraAllow.model_validate_json "{\"z\": 1, \"a\": 1, \"b\": \"q\"}" with
+        | .ok v => extraReport v.toValid
+        | .error e => e.json
+      check "(some {\"z\":1,\"b\":\"q\"}) [a, z, b] {\"a\":1,\"b\":\"q\",\"z\":1}" py
+      <&&> check "(some {\"z\":1}) [a, z] {\"a\":1,\"b\":\"x\",\"z\":1}" js },
+  { upstream := "pydantic/tests/test_main.py::test_model_extra_is_none_when_extra_is_forbid"
+    name := "extra='forbid' and 'ignore': model_extra is None"
+    run := do
+      let f := match ExtraForbid.model_validate (json% {"a": 1, "B": "q"}) with
+        | .ok v => toString (v.model_extra.map LeanJson.printStr)
+        | .error e => e.json
+      let i := match Image.model_validate (json% {"url": "u", "name": "n", "z": 1}) with
+        | .ok v => toString (v.model_extra.map LeanJson.printStr)
+        | .error e => e.json
+      check "none" f <&&> check "none" i },
+  { upstream := "pydantic/tests/test_main.py::test_forbidden_extra_fails"
+    name := "extra='forbid' deviation: a key repeated in JSON text is one extra_forbidden (pydantic: one per occurrence)"
+    run := check "[{\"type\":\"extra_forbidden\",\"loc\":[\"z\"],\"msg\":\"Extra inputs are not permitted\",\"input\":2}]"
+      (match ExtraForbid.model_validate_json "{\"a\":1,\"B\":\"q\",\"z\":1,\"z\":2}" with
+        | .ok _ => "ok"
+        | .error e => e.json (include_url := false)) },
+  { upstream := "pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra"
+    name := "extra='allow' deviation: an extra named like an aliased field does not set that field"
+    -- pydantic: {"a":1,"b":"x","z":1,"b":"q","y":[1]} (its model_fields_set holds the name 'b')
+    run := check "{\"a\":1,\"z\":1,\"b\":\"q\",\"y\":[1]}"
+      (match ExtraAllow.model_validate (json% {"z": 1, "a": 1, "b": "q", "y": [1]}) with
+        | .ok v => v.model_dump_json (exclude_unset := true)
+        | .error e => e.json) },
   { upstream := "pydantic/tests/test_types.py::test_ser_json_inf_nan"
     name := "float: ser_json_inf_nan null, constants, strings"
     run := do

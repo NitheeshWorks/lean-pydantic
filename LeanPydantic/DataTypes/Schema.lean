@@ -47,8 +47,10 @@ inductive Schema where
   /-- `{"const": v}` or `{"enum": [...]}`, with `type` when the values share one. -/
   | literal (values : List Json)
   | anyOf (alts : List Schema)
-  /-- A model: its title, its properties in field order, its required keys. -/
-  | object (title : String) (props : List (String × Schema)) (required : List String)
+  /-- A model: its title, its properties in field order, its required keys,
+  and its `extra` policy (`additionalProperties`: `false` under `forbid`,
+  `true` under `allow`, absent under `ignore`). -/
+  | object (title : String) (props : List (String × Schema)) (required : List String) (extra : Extra)
   /-- `{"$ref": "#/$defs/name"}`, carrying the schema it names; the printer
   collects every named schema into the top-level `$defs`. -/
   | ref (name : String) (target : Schema)

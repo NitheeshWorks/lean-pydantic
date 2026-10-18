@@ -16,6 +16,17 @@ structure Cfg where
   from_attributes : Bool := false
   deriving DecidableEq, Repr, Inhabited
 
+/-- pydantic's `model_config['extra']`: what validation does with input
+members that no field reads. -/
+inductive Extra where
+  /-- Leave them out (pydantic's default). -/
+  | ignore
+  /-- Report each as `extra_forbidden`. -/
+  | forbid
+  /-- Keep them: the model's `model_extra`, dumped after the fields. -/
+  | allow
+  deriving DecidableEq, Repr, Inhabited
+
 /-- pydantic's `ser_json_inf_nan`: how a non-finite float dumps. -/
 inductive InfNan where
   /-- `null` (pydantic's default) -/
@@ -40,6 +51,9 @@ structure DumpOpts where
   exclude_defaults : Bool := false
   exclude_none : Bool := false
   set_from : Option LeanJson.Json := none
+  /-- Whether `set_from` came as Python objects or as JSON text: under
+  `extra='allow'` the two keep different extras (`Fields.accepted`). -/
+  set_mode : InputMode := .python
   /-- Apply serializers (`Serialize`, `WrapSerialize`). Off, a value dumps as
   validation sees it, which is how pydantic writes a JSON Schema default
   and compares a value with its default for `exclude_defaults`. -/
@@ -54,7 +68,7 @@ structure DumpOpts where
 value into the input. -/
 def DumpOpts.nested (o : DumpOpts) (set_from : Option LeanJson.Json := none) : DumpOpts :=
   { by_alias := o.by_alias, exclude_unset := o.exclude_unset,
-    exclude_defaults := o.exclude_defaults, exclude_none := o.exclude_none, set_from,
+    exclude_defaults := o.exclude_defaults, exclude_none := o.exclude_none, set_from, set_mode := o.set_mode,
     serializers := o.serializers, ser_json_inf_nan := o.ser_json_inf_nan }
 
 /-- The dump that validation reads back: every field, under its alias. -/

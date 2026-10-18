@@ -15,7 +15,12 @@ member with its name wins, as in a Python `dict`), validated, and its errors
 placed under the field's name (Keel's `Validator.at`); a missing field takes
 its default or is `missing` (with the whole object as input); every field is
 validated and all their errors are reported, in field order
-(`Validator.both`); members that name no field are ignored (`extra='ignore'`).
+(`Validator.both`). Members that no field reads follow the model's `extra`
+policy (`model_config['extra']`): ignored (`'ignore'`, the default), each an
+`extra_forbidden` error after the fields' errors (`'forbid'`), or kept and
+dumped after the fields (`'allow'`; a validated value finds them in the input
+it remembers, as `exclude_unset` does). Under `populate_by_name` a field with
+an alias is read by its alias, else by its name.
 -/
 
 namespace LeanPydantic
@@ -38,7 +43,13 @@ structure Fields (β : Type) where
   /-- Validate from the members `kvs` of the object `j`. -/
   decode : Cfg → Json → Keel.Validator ErrorDetails (List (String × Json)) β
   encode : DumpOpts → β → List (String × Json)
+  /-- Each field's key: its alias, or its name. -/
   keys : List String
+  /-- Each field's input keys, in the order they are tried: its key, then,
+  under `populate_by_name`, its name. -/
+  lookups : List (List String)
+  /-- The fields' own names. -/
+  names : List String
   props : List (String × Schema)
   required : List String
 
@@ -49,6 +60,8 @@ def nil : Fields Unit where
   decode _ _ _ := .ok ()
   encode _ _ := []
   keys := []
+  lookups := []
+  names := []
   props := []
   required := []
 
@@ -64,6 +77,28 @@ def member {α : Type} [FromJson α] (cfg : Cfg) (j : Json) (name : String) (def
       match default with
       | some d => .ok d
       | none => .error [{ kind := .missing, input := j, mode := cfg.mode }]
+
+/-- The first of `cands` the members have, with its value (the last member
+with that key). -/
+def lookupFirst (cands : List String) (kvs : List (String × Json)) : Option (String × Json) :=
+  match cands with
+  | [] => none
+  | k :: ks =>
+    match LeanJson.Json.lookupLast k kvs with
+    | some v => some (k, v)
+    | none => lookupFirst ks kvs
+
+/-- One field under `populate_by_name`: read by its alias `key` if the input
+has it, else by its `name`; its errors are under the key it was read by, and
+`missing` is under the alias. -/
+def memberBy {α : Type} [FromJson α] (cfg : Cfg) (j : Json) (key name : String) (default : Option α) :
+    Keel.Validator ErrorDetails (List (String × Json)) α := fun kvs =>
+  match LeanJson.Json.lookupLast key kvs with
+  | some _ => member cfg j key default kvs
+  | none =>
+    match LeanJson.Json.lookupLast name kvs with
+    | some _ => member cfg j name default kvs
+    | none => member cfg j key default kvs
 
 /-- Whether `model_dump` keeps the field `name` whose dumped value is `v`. -/
 def keep (opts : DumpOpts) (name : String) (v : Json) (isDefault isSet : Bool) : Bool :=
@@ -87,23 +122,28 @@ def wasSet (set_from : Option Json) (key : String) : Bool :=
   | _ => true
 
 /-- A field `name : α`, validated under `alias` when it has one (pydantic's
-`Field(alias=…)`, `validate_by_name=False`), with an optional default, before
-the fields `rest`. -/
+`Field(alias=…)`), and also under `name` when `byName` (`populate_by_name`),
+with an optional default, before the fields `rest`. -/
 @[noinline]
 def field {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] (name : String) (alias : Option String)
-    (default : Option α) (rest : Fields β) (factory : Bool := false) : Fields (α × β) :=
+    (default : Option α) (rest : Fields β) (factory : Bool := false) (byName : Bool := false) :
+    Fields (α × β) :=
   let key := alias.getD name
-  { decode := fun cfg j => Keel.Validator.both (member cfg j key default) (rest.decode cfg j)
+  { decode := fun cfg j => Keel.Validator.both
+      (if byName then memberBy cfg j key name default else member cfg j key default) (rest.decode cfg j)
     encode := fun opts p =>
-      let v := toJson (opts.nested (setMember opts.set_from key)) p.1
+      let setKey := if byName && (setMember opts.set_from key).isNone then name else key
+      let v := toJson (opts.nested (setMember opts.set_from setKey)) p.1
       let isDefault := match default with
         | some d => decide (toJson { serializers := false } p.1 = toJson { serializers := false } d)
         | none => false
       let rest' := rest.encode opts p.2
-      if keep opts name v isDefault (wasSet opts.set_from key) then
+      if keep opts name v isDefault (wasSet opts.set_from setKey) then
         ((if opts.by_alias then key else name), v) :: rest'
       else rest'
     keys := key :: rest.keys
+    lookups := (if byName then [key, name] else [key]) :: rest.lookups
+    names := name :: rest.names
     props := (key, .annotated (JsonSchema.schema α)
       (if (JsonSchema.schema α).wantsTitle then some (fieldTitle key) else none)
       (if factory then none else default.map (toJson { serializers := false }))) :: rest.props
@@ -111,23 +151,81 @@ def field {α β : Type} [FromJson α] [ToJson α] [JsonSchema α] (name : Strin
 
 variable {α β : Type}
 
-/-- The model validator: an object's fields, or `model_type`. -/
-def validate (title : String) (F : Fields β) (back : β → α) (cfg : Cfg) (j : Json) :
+/-- The input keys the fields read: for each field, the first of its keys the
+members have. -/
+def consumed (F : Fields β) (kvs : List (String × Json)) : List String :=
+  F.lookups.filterMap fun cs => (lookupFirst cs kvs).map Prod.fst
+
+/-- The input keys that are not extras. pydantic-core differs by input mode:
+from Python objects, the keys the fields read; from JSON text, every field's
+key and every field's name, read or not (so there a field's name is never an
+extra, even when the field is read only by its alias). -/
+def accepted (F : Fields β) : InputMode → List (String × Json) → List String
+  | .python, kvs => F.consumed kvs
+  | .json, _ => F.keys ++ F.names
+
+/-- The keys accepted whenever the input has them: the fields' keys from
+Python objects (without `populate_by_name`), and also their names from JSON
+text. -/
+def acceptedNames (F : Fields β) : InputMode → List String
+  | .python => F.keys
+  | .json => F.keys ++ F.names
+
+/-- The members that are extras, in input order. -/
+def extras (F : Fields β) (mode : InputMode) (kvs : List (String × Json)) : List (String × Json) :=
+  kvs.filter fun kv => !decide (kv.1 ∈ F.accepted mode kvs)
+
+/-- `extra='forbid'`: an `extra_forbidden` error for each extra, under its
+key, with its value as input. -/
+def forbidExtras (cfg : Cfg) (F : Fields β) : Keel.Validator ErrorDetails (List (String × Json)) Unit :=
+  fun kvs =>
+    match F.extras cfg.mode kvs with
+    | [] => .ok ()
+    | es => .error (es.map fun kv => { kind := .extraForbidden, loc := [.key kv.1], input := kv.2, mode := cfg.mode })
+
+/-- The model validator: an object's fields (and, under `forbid`, no extras),
+or `model_type`. pydantic-core reports the extras after the fields' errors
+for Python input, and before them for JSON input. -/
+def validate (title : String) (extra : Extra) (F : Fields β) (back : β → α) (cfg : Cfg) (j : Json) :
     Except (List ErrorDetails) α :=
   match j with
-  | .obj ⟨kvs⟩ => (F.decode cfg j kvs).map back
+  | .obj ⟨kvs⟩ =>
+    match extra with
+    | .forbid =>
+      match cfg.mode with
+      | .python => (Keel.Validator.both (F.decode cfg j) (forbidExtras cfg F) kvs).map (fun p => back p.1)
+      | .json => (Keel.Validator.both (forbidExtras cfg F) (F.decode cfg j) kvs).map (fun p => back p.2)
+    | _ => (F.decode cfg j kvs).map back
   | _ =>
     let kind := if cfg.from_attributes && cfg.mode = .python then .modelAttributesType else .modelType title
     .error [{ kind, input := j, mode := cfg.mode }]
 
-/-- The model serialiser. -/
-def dump (F : Fields β) (into : α → β) (opts : DumpOpts) (a : α) : Json :=
-  .obj ⟨F.encode opts (into a)⟩
+/-- Whether `model_dump` keeps an extra member: `include`, `exclude` and
+`exclude_none` apply to it, `exclude_defaults` and `exclude_unset` do not (it
+has no default, and it was set). -/
+def keepExtra (opts : DumpOpts) (kv : String × Json) : Bool :=
+  !(opts.exclude_none && decide (kv.2 = .null)) && !(decide (kv.1 ∈ opts.exclude)) &&
+    (match opts.«include» with
+      | some ks => decide (kv.1 ∈ ks)
+      | none => true)
+
+/-- The extras a dump writes under `extra='allow'`: those of the input the
+value was validated from, as a Python `dict` holds them (first position, last
+value), as they came. A value with no input has none. -/
+def extraDump (F : Fields β) (opts : DumpOpts) : List (String × Json) :=
+  match opts.set_from with
+  | some (.obj ⟨kvs⟩) => (dedup (F.extras opts.set_mode kvs)).filter (keepExtra opts)
+  | _ => []
+
+/-- The model serialiser: the fields, then (under `allow`) the extras. -/
+def dump (extra : Extra) (F : Fields β) (into : α → β) (opts : DumpOpts) (a : α) : Json :=
+  .obj ⟨F.encode opts (into a) ++ (if extra = .allow then F.extraDump opts else [])⟩
 
 /-- The model schema: a reference, named by the model's title, to its object
 schema (pydantic puts every model under `$defs`; a document for the model
 itself is the object, with the others under `$defs`). -/
-def schema (title : String) (F : Fields β) : Schema := .ref title (.object title F.props F.required)
+def schema (title : String) (extra : Extra) (F : Fields β) : Schema :=
+  .ref title (.object title F.props F.required extra)
 
 end Fields
 

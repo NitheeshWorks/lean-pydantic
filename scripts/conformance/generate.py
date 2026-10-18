@@ -17,7 +17,7 @@ import json, sys
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Literal, Optional, Union
-from pydantic import BaseModel, Field, FiniteFloat, NonNegativeInt, TypeAdapter, ValidationError, constr
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, NonNegativeInt, TypeAdapter, ValidationError, constr
 
 class Item(BaseModel):
     name: str
@@ -59,6 +59,36 @@ class E2(BaseModel):
     u: Union[int, str]
     t: tuple[int, str]
     d: dict[str, int]
+
+class ExtraForbid(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    a: int
+    b: str = Field(alias='B')
+
+class ExtraAllow(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    a: int
+    b: str = Field('x', alias='B')
+
+class ExtraPop(BaseModel):
+    model_config = ConfigDict(extra='forbid', populate_by_name=True)
+    a: int
+    b: str = Field(alias='B')
+
+class ExtraNested(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    inner: ExtraAllow
+    f: Optional[ExtraForbid] = None
+
+class ExtraAliasAllow(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    a: str = Field('default', alias='alias_a')
+    b: str = Field('default', alias='alias_b')
+
+class FormData(BaseModel):
+    username: str
+    password: str
+    model_config = {'extra': 'forbid'}
 
 TYPES = {
     'int': int,
@@ -104,6 +134,12 @@ TYPES = {
     'condecimal_5_2': Annotated[Decimal, Field(max_digits=5, decimal_places=2)],
     'condecimal_gt0_3': Annotated[Decimal, Field(gt=0, max_digits=3)],
     'condecimal_places1_mult': Annotated[Decimal, Field(decimal_places=1, multiple_of=Decimal('0.5'), le=10)],
+    'extra_forbid': ExtraForbid,
+    'extra_allow': ExtraAllow,
+    'extra_pop': ExtraPop,
+    'extra_nested': ExtraNested,
+    'extra_alias_allow': ExtraAliasAllow,
+    'form_data': FormData,
 }
 
 PC = 'pydantic-core/tests/validators/'
@@ -248,7 +284,30 @@ ROWS += [
      PC + 'test_decimal.py::test_decimal_multiple_of'),
 ]
 
+# model_config['extra'] and populate_by_name (no repeated keys: JSON text with
+# a repeated extra key is a documented deviation, pinned by a hand case)
+EXTRA_FORBID_IN = ['{"a":1,"B":"q"}', '{"z":1,"a":"x","b":"q","B":2,"y":null}', '{"a":1,"B":"q","extra":[1,{"k":2}]}',
+    '{}', '{"z":1}', '[]', '5', '{"a":1,"b":"q"}', '{"B":"q","a":1,"a2":true}']
+EXTRA_ALLOW_IN = ['{"a":1}', '{"z":1,"a":1,"b":"q","y":[1]}', '{"a":1,"B":"v","c":{"d":null}}', '{"c":"c"}',
+    '{"a":"x","w":1}', '{"B":"v","a":2,"z":[]}']
+EXTRA_POP_IN = ['{"a":1,"b":"q"}', '{"a":1,"B":"q"}', '{"a":1,"b":"q","B":"r"}', '{"a":1,"b":5}', '{"a":1}',
+    '{"a":1,"B":"q","c":0}', '{"b":"q","c":0}']
+EXTRA_NESTED_IN = ['{"inner":{"a":1,"q":2},"f":{"a":1,"B":"s","w":0},"k":1}', '{"inner":{"a":1,"q":2}}',
+    '{"inner":{"a":1},"f":null}', '{"inner":5,"x":1}', '{"f":{"a":1,"B":"s"},"inner":{"a":3,"B":"t","r":[1]}}']
+EXTRA_ALIAS_IN = ['{"alias_a":"a","c":"c"}', '{"extra_key":"extra"}', '{"a":"x","alias_b":"y"}']
+FORM_IN = ['{"username":"Foo","password":"secret"}', '{"username":"Foo","password":"secret","extra":"extra"}',
+    '{}', '{"username":"Foo"}']
+ROWS += [
+    ('extra_forbid', EXTRA_FORBID_IN, 'pydantic/tests/test_main.py::test_forbidden_extra_fails'),
+    ('extra_allow', EXTRA_ALLOW_IN, 'pydantic/tests/test_main.py::test_allow_extra'),
+    ('extra_pop', EXTRA_POP_IN, 'pydantic/tests/test_config.py::test_populate_by_name_still_effective'),
+    ('extra_nested', EXTRA_NESTED_IN, 'pydantic/tests/test_main.py::test_forbidden_extra_fails'),
+    ('extra_alias_allow', EXTRA_ALIAS_IN, 'pydantic/tests/test_main.py::test_dict_with_extra_keys'),
+    ('form_data', FORM_IN, 'fastapi/tests/test_tutorial/test_request_form_models/test_tutorial002.py'),
+]
+
 STRICT_ROWS = [
+    ('extra_forbid', ['{"a":1,"B":"q","z":0}', '{"a":"1","B":"q","z":0}'], 'pydantic/tests/test_main.py::test_forbidden_extra_fails'),
     ('decimal', ['1.5', '"1.5"', '1', 'true'], PC + 'test_decimal.py::test_decimal_strict_py'),
     ('plain_float', ['1.5', '1', '"1.5"', 'true', 'NaN'], PC + 'test_float.py::test_float_strict'),
     ('int', ['1', '"1"', '1.0', 'true', 'null'], PC + 'test_int.py::test_int_strict'),
@@ -258,6 +317,7 @@ STRICT_ROWS = [
     ('item', ['{"name": "x", "price": 1}', '{"name": "x", "price": "1"}'], 'pydantic/tests/test_main.py::test_model_validate_strict'),
 ]
 PD_DUMP = 'pydantic/tests/test_main.py::test_exclude_unset_dict'
+PD_DUMP_EXTRA = 'pydantic/tests/test_main.py::test_dict_exclude_unset_populated_by_alias_with_extra'
 JSON_ONLY = [('item', ['{"name": "x",', '{"name": "x", "price": 1} x', '', '[1,]'],
     'pydantic/tests/test_types.py::test_invalid_model_json'),
     ('int', ['"1', '01', '-'], 'pydantic/tests/test_types.py::test_invalid_simple_json')]
@@ -334,7 +394,15 @@ DUMP_ROWS = [('shop', t, opts) for t in [
   for opts in [(False, False, False, False), (True, False, False, False), (False, True, False, False),
                (True, True, False, False), (False, False, True, False), (False, False, False, True)]] + \
   [('offer', t, opts) for t in ['{"price": 2.5, "item_id": 3}', '{"price": 1, "item_id": 1, "q": "abcd", "discount": 0}']
-   for opts in [(False, True, False, False), (False, False, False, True)]]
+   for opts in [(False, True, False, False), (False, False, False, True)]] + \
+  [(tag, t, opts) for tag, ts in [('extra_alias_allow', EXTRA_ALIAS_IN), ('extra_allow', EXTRA_ALLOW_IN[:3]),
+                                  ('extra_nested', EXTRA_NESTED_IN[1:3])] for t in ts
+   for opts in [(False, False, False, False), (True, False, False, False), (False, True, False, False),
+                (True, True, False, False), (False, False, True, False)]
+   # an extra named like an aliased field puts that name in pydantic's
+   # model_fields_set, so exclude_unset dumps the field: a documented deviation
+   # (model.extra in docs/traceability.toml), pinned by a hand case
+   if not (opts[1] and t in ('{"a":"x","alias_b":"y"}', '{"z":1,"a":1,"b":"q","y":[1]}'))]
 
 def run_dump(tag, text, opts):
     ta = TypeAdapter(TYPES[tag])
@@ -342,7 +410,8 @@ def run_dump(tag, text, opts):
     ba, eu, en, ed = opts
     return v.model_dump_json(by_alias=ba, exclude_unset=eu, exclude_none=en, exclude_defaults=ed)
 
-dumps = [(PD_DUMP, tag, text, opts, run_dump(tag, text, opts)) for tag, text, opts in DUMP_ROWS]
+dumps = [(PD_DUMP if tag in ('shop', 'offer') else PD_DUMP_EXTRA, tag, text, opts, run_dump(tag, text, opts))
+         for tag, text, opts in DUMP_ROWS]
 
 schemas = [(tag, json.dumps(TypeAdapter(t).json_schema(), separators=(',', ':'), ensure_ascii=False))
            for tag, t in TYPES.items()]

@@ -57,6 +57,10 @@ structure Fields.Lawful {β : Type} (F : Fields β) : Prop where
   decode_encode : ∀ (cfg : Cfg) (j : Json) (b : β) (kvs : List (String × Json)),
     (∀ k ∈ F.keys, LeanJson.Json.lookupLast k kvs = LeanJson.Json.lookupLast k (F.encode DumpOpts.roundTrip b)) →
       F.decode cfg j kvs = .ok b
+  /-- Every field is read by its key alone (no `populate_by_name`). -/
+  lookups_eq : F.lookups = F.keys.map ([·])
+  /-- The schema's properties are the fields' keys. -/
+  props_keys : F.props.map Prod.fst = F.keys
   /-- A default dump writes every field, in order. -/
   encode_keys : ∀ b : β, (F.encode DumpOpts.roundTrip b).map Prod.fst = F.keys
   /-- Strictly decoded members satisfy the properties and the required list. -/
